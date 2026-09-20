@@ -1,0 +1,14 @@
+---
+export const prerender = false;
+import Layout from "@/layouts/Layout.astro";
+import { ChatPage } from "@/features/chat/ChatPage";
+
+const { sessionId } = Astro.params;
+if (!sessionId) {
+  return Astro.redirect("/workspaces");
+}
+---
+
+<Layout title="Chat · Chavez">
+  <ChatPage client:load sessionId={sessionId} />
+</Layout>

@@ -7,12 +7,13 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { getSession, signOut } from "../api/api.ts";
+import { getSession, signOut, type SessionUser } from "../api/api.ts";
 import { clearCredentials, loadCredentials } from "../api/credentials.ts";
 import { renderer } from "../../../app/renderer";
 import { LoginScreen } from "./LoginScreen.tsx";
 
 type AuthContextValue = {
+  user: SessionUser | null;
   logout: () => Promise<void>;
 };
 
@@ -34,20 +35,24 @@ type GateState = "loading" | "login" | "ready";
 
 export function AuthGate({ children }: AuthGateProps) {
   const [state, setState] = useState<GateState>("loading");
+  const [user, setUser] = useState<SessionUser | null>(null);
 
   const checkSession = useCallback(async () => {
     setState("loading");
     const creds = await loadCredentials();
     if (!creds) {
+      setUser(null);
       setState("login");
       return;
     }
     const session = await getSession(creds);
     if (!session) {
       await clearCredentials();
+      setUser(null);
       setState("login");
       return;
     }
+    setUser(session);
     setState("ready");
   }, []);
 
@@ -57,10 +62,11 @@ export function AuthGate({ children }: AuthGateProps) {
 
   const logout = useCallback(async () => {
     await signOut();
+    setUser(null);
     setState("login");
   }, []);
 
-  const ctx = useMemo(() => ({ logout }), [logout]);
+  const ctx = useMemo(() => ({ user, logout }), [user, logout]);
 
   if (state === "loading") {
     return (
@@ -74,7 +80,9 @@ export function AuthGate({ children }: AuthGateProps) {
     return (
       <AuthContext.Provider value={ctx}>
         <LoginScreen
-          onSuccess={() => setState("ready")}
+          onSuccess={() => {
+            void checkSession();
+          }}
           onExit={() => {
             renderer.destroy();
           }}

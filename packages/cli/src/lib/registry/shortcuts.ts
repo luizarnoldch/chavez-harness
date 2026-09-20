@@ -29,6 +29,22 @@ export const SHORTCUTS: Shortcut[] = [
     hint: "Tab modo",
   },
   {
+    id: "cycle-model",
+    label: "Ctrl+M",
+    description: "Cicla el modelo entre local y cursor disponibles",
+    scope: "global",
+    keys: [{ name: "m", ctrl: true }],
+    hint: "Ctrl+M modelo",
+  },
+  {
+    id: "toggle-status-panel",
+    label: "Ctrl+U",
+    description: "Abre o cierra el panel de información de la barra de estado",
+    scope: "global",
+    keys: [{ name: "u", ctrl: true }],
+    hint: "Ctrl+U info",
+  },
+  {
     id: "submit",
     label: "Enter",
     description: "Envía el mensaje o ejecuta el comando seleccionado",
@@ -60,6 +76,13 @@ export const SHORTCUTS: Shortcut[] = [
     description: "Alterna entre iniciar sesión y registrarse",
     scope: "auth",
     keys: [{ name: "r", ctrl: true }],
+  },
+  {
+    id: "reveal-password",
+    label: "F2",
+    description: "Alterna mostrar u ocultar la contraseña en la pantalla de auth",
+    scope: "auth",
+    keys: [{ name: "f2" }],
   },
   {
     id: "focus-prompt",

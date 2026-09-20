@@ -1,0 +1,35 @@
+meta {
+  name: Bind workspace
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/workspaces/bind
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "path": "/tmp/bruno-workspace"
+  }
+}
+
+script:post-response {
+  if (res.body && res.body.id) {
+    bru.setVar("workspaceId", res.body.id);
+  }
+}
+
+assert {
+  res.status: eq 200
+}

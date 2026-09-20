@@ -1,12 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import { websocket } from "hono/bun";
-import { ChavezWsClient } from "../../cli/src/ws/client.ts";
+import { ChavezWsClient } from "../../cli/src/features/workspace/ws/client.ts";
 import { createApp } from "../src/app.ts";
+import { createMemoryChatService, createMemoryWorkspaceService } from "./memory-services.ts";
 
 describe("CLI WsClient ↔ hub", () => {
   test("bind + ping round-trip", async () => {
+    const workspaces = createMemoryWorkspaceService();
     const app = createApp({
       ws: { resolveUserId: async () => "cli-user" },
+      workspaces,
+      chat: createMemoryChatService(workspaces),
     });
     const running = Bun.serve({
       fetch: app.fetch,

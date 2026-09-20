@@ -14,6 +14,8 @@ export type HubConnection = {
   workspacePath: string | null;
   daemonId: string | null;
   role: DaemonRole | null;
+  machineId: string | null;
+  hostname: string | null;
   lastHeartbeatAt: number;
 };
 
@@ -85,6 +87,27 @@ export function createHub() {
       );
     },
 
+    listForWorkspace(userId: string, workspaceId: string): HubConnection[] {
+      return this.listForUser(userId).filter((c) => c.workspaceId === workspaceId);
+    },
+
+    /** One host per user (v1). Prefer most recent heartbeat. */
+    findHost(userId: string): HubConnection | undefined {
+      const hosts = this.listForUser(userId).filter((c) => c.clientKind === "host");
+      if (hosts.length === 0) return undefined;
+      return hosts.reduce((best, cur) =>
+        cur.lastHeartbeatAt >= best.lastHeartbeatAt ? cur : best,
+      );
+    },
+
+    listHosts(userId: string): HubConnection[] {
+      return this.listForUser(userId).filter((c) => c.clientKind === "host");
+    },
+
+    machineStatus(userId: string): "online" | "offline" {
+      return this.findHost(userId) ? "online" : "offline";
+    },
+
     sendTo(connectionId: string, message: unknown): boolean {
       const conn = byId.get(connectionId);
       if (!conn) return false;
@@ -95,6 +118,20 @@ export function createHub() {
     broadcastToUser(userId: string, message: unknown, exceptConnectionId?: string) {
       const payload = JSON.stringify(message);
       for (const conn of this.listForUser(userId)) {
+        if (exceptConnectionId && conn.connectionId === exceptConnectionId) continue;
+        conn.socket.send(payload);
+      }
+    },
+
+    broadcastToWorkspace(
+      userId: string,
+      workspaceId: string,
+      message: unknown,
+      exceptConnectionId?: string,
+    ) {
+      const payload = JSON.stringify(message);
+      for (const conn of this.listForUser(userId)) {
+        if (conn.workspaceId !== workspaceId) continue;
         if (exceptConnectionId && conn.connectionId === exceptConnectionId) continue;
         conn.socket.send(payload);
       }

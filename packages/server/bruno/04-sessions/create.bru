@@ -1,0 +1,35 @@
+meta {
+  name: Create session
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/workspaces/{{workspaceId}}/sessions
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "mode": "plan"
+  }
+}
+
+script:post-response {
+  if (res.body && res.body.id) {
+    bru.setVar("sessionId", res.body.id);
+  }
+}
+
+assert {
+  res.status: eq 200
+}

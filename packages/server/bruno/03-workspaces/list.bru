@@ -1,0 +1,19 @@
+meta {
+  name: List workspaces
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/workspaces
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+assert {
+  res.status: eq 200
+}

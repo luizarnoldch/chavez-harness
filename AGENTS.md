@@ -4,7 +4,7 @@ Contexto operativo para agentes de IA que trabajen en este repositorio.
 
 ## Qué es
 
-Monorepo **chavez-harness**: harness TUI de conversación (modos Plan/Build). El trabajo actual está en **`packages/cli`** (`@chavez-harness/cli`): Bun + React 19 + OpenTUI. Los mensajes son **echo local**; no hay agente LLM ni PTY todavía.
+Monorepo **chavez-harness**: harness TUI de conversación (modos Plan/Build) más web Astro. El trabajo TUI está en **`packages/cli`** (`@chavez-harness/cli`): Bun + React 19 + OpenTUI. La web en **`packages/web`** (Astro + React + shadcn + better-auth client). Chat y workspaces se sincronizan con **`packages/server`** (Hono + WS + Postgres).
 
 ## Comandos útiles
 
@@ -12,6 +12,8 @@ Monorepo **chavez-harness**: harness TUI de conversación (modos Plan/Build). El
 # raíz
 bun install
 bun run dev:cli
+bun run dev:server
+bun run dev:web
 
 # typecheck CLI
 cd packages/cli && bun run typecheck
@@ -48,7 +50,7 @@ cd packages/cli && bun run docs:registry
 ## No hacer (salvo que el usuario lo pida)
 
 - Reintroducir panel Terminal / PTY / `EmbeddedTerminal`.
-- Inventar backend de agente, auth, o persistencia.
+- Inventar backend de agente LLM real o PTY (el mock + sync workspace/chat ya está).
 - Sustituir OpenTUI por Ink/Blessed u otra TUI.
 - Commits o push sin petición explícita.
 

@@ -30,8 +30,55 @@ const AUTH_SUBMIT_BINDINGS = [
 ];
 
 export const EXIT_HINT = "Pulsa Ctrl+C otra vez para salir";
+export const REVEAL_PASSWORD_HINT = "F2 muestra/oculta la contraseña";
 const NORMAL_BORDER = "#414868";
 const EXIT_BORDER = "#e0af68";
+const MASK_CHAR = "•";
+const HELP_WIDTH = 48;
+
+function maskPassword(value: string): string {
+  return MASK_CHAR.repeat(Array.from(value).length);
+}
+
+function isPrintablePasswordKey(key: KeyEvent): boolean {
+  if (key.eventType === "release") return false;
+  if (key.ctrl || key.meta) return false;
+  const special = new Set([
+    "return",
+    "kpenter",
+    "tab",
+    "escape",
+    "backspace",
+    "delete",
+    "up",
+    "down",
+    "left",
+    "right",
+    "home",
+    "end",
+    "f1",
+    "f2",
+    "f3",
+    "f4",
+    "f5",
+    "f6",
+    "f7",
+    "f8",
+    "f9",
+    "f10",
+    "f11",
+    "f12",
+  ]);
+  if (special.has(key.name)) return false;
+  if (key.sequence.length === 1 && key.sequence >= " ") return true;
+  if (key.name.length === 1) return true;
+  return false;
+}
+
+function isRevealTogglePress(key: KeyEvent): boolean {
+  if (key.eventType === "release" || key.repeated) return false;
+  return matchesShortcut(key, getShortcut("reveal-password"));
+}
 
 export function LoginScreen({ onSuccess, onExit, authApi }: LoginScreenProps) {
   const { show } = useToast();
@@ -41,6 +88,7 @@ export function LoginScreen({ onSuccess, onExit, authApi }: LoginScreenProps) {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [passwordVisible, setPasswordVisible] = useState(false);
   const [focused, setFocused] = useState<FocusField>("email");
   const [busy, setBusy] = useState(false);
   const [confirmExit, setConfirmExit] = useState(false);
@@ -48,10 +96,45 @@ export function LoginScreen({ onSuccess, onExit, authApi }: LoginScreenProps) {
   const nameRef = useRef<TextareaRenderable>(null);
   const emailRef = useRef<TextareaRenderable>(null);
   const passwordRef = useRef<TextareaRenderable>(null);
+  const syncingDisplayRef = useRef(false);
+  const passwordVisibleRef = useRef(false);
+  const passwordValueRef = useRef("");
+
+  passwordValueRef.current = password;
+
+  const syncPasswordDisplay = useCallback((value: string, visible: boolean) => {
+    const field = passwordRef.current;
+    if (!field) return;
+    const display = visible ? value : maskPassword(value);
+    syncingDisplayRef.current = true;
+    field.setText(display);
+    field.cursorOffset = display.length;
+    syncingDisplayRef.current = false;
+  }, []);
+
+  const hidePassword = useCallback(() => {
+    if (!passwordVisibleRef.current) return;
+    passwordVisibleRef.current = false;
+    setPasswordVisible(false);
+    syncPasswordDisplay(passwordValueRef.current, false);
+  }, [syncPasswordDisplay]);
+
+  const togglePasswordVisibility = useCallback(() => {
+    const next = !passwordVisibleRef.current;
+    passwordVisibleRef.current = next;
+    setPasswordVisible(next);
+    syncPasswordDisplay(passwordValueRef.current, next);
+  }, [syncPasswordDisplay]);
 
   useEffect(() => {
     setFocused(mode === "register" ? "name" : "email");
   }, [mode]);
+
+  useEffect(() => {
+    if (focused !== "password") {
+      hidePassword();
+    }
+  }, [focused, hidePassword]);
 
   const fieldsForMode = useCallback((): FocusField[] => {
     return mode === "register" ? ["name", "email", "password"] : ["email", "password"];
@@ -98,8 +181,55 @@ export function LoginScreen({ onSuccess, onExit, authApi }: LoginScreenProps) {
     }
   }, [busy, email, password, name, mode, onSuccess, show, signIn, signUp]);
 
+  const handlePasswordKeyDown = useCallback(
+    (key: KeyEvent) => {
+      // F2 is handled only in useKeyboard to avoid double-toggle.
+      if (matchesShortcut(key, getShortcut("reveal-password"))) {
+        key.preventDefault();
+        key.stopPropagation();
+        return true;
+      }
+
+      if (!passwordRef.current?.focused) {
+        return false;
+      }
+
+      if (passwordVisibleRef.current) {
+        return false;
+      }
+
+      if (key.name === "backspace") {
+        key.preventDefault();
+        key.stopPropagation();
+        const next = Array.from(passwordValueRef.current).slice(0, -1).join("");
+        passwordValueRef.current = next;
+        setPassword(next);
+        syncPasswordDisplay(next, false);
+        return true;
+      }
+
+      if (isPrintablePasswordKey(key)) {
+        key.preventDefault();
+        key.stopPropagation();
+        const ch = key.sequence.length >= 1 ? key.sequence : key.name;
+        const next = passwordValueRef.current + ch;
+        passwordValueRef.current = next;
+        setPassword(next);
+        syncPasswordDisplay(next, false);
+        return true;
+      }
+
+      return false;
+    },
+    [syncPasswordDisplay],
+  );
+
   const handleKeyDown = useCallback(
     (key: KeyEvent) => {
+      if (handlePasswordKeyDown(key)) {
+        return;
+      }
+
       const isExitChord = matchesShortcut(key, getShortcut("clear-or-exit"));
 
       if (confirmExit && !isExitChord) {
@@ -131,17 +261,27 @@ export function LoginScreen({ onSuccess, onExit, authApi }: LoginScreenProps) {
         cycleFocus();
       }
     },
-    [confirmExit, onExit, cycleFocus],
+    [confirmExit, onExit, cycleFocus, handlePasswordKeyDown],
   );
 
   useKeyboard((key) => {
-    const active =
-      focused === "name"
-        ? nameRef.current
-        : focused === "email"
-          ? emailRef.current
-          : passwordRef.current;
-    if (active?.focused) return;
+    if (matchesShortcut(key, getShortcut("reveal-password"))) {
+      if (!isRevealTogglePress(key)) {
+        key.preventDefault();
+        key.stopPropagation();
+        return;
+      }
+      key.preventDefault();
+      key.stopPropagation();
+      togglePasswordVisibility();
+      return;
+    }
+
+    const anyFieldFocused =
+      Boolean(nameRef.current?.focused) ||
+      Boolean(emailRef.current?.focused) ||
+      Boolean(passwordRef.current?.focused);
+    if (anyFieldFocused) return;
     handleKeyDown(key);
   });
 
@@ -172,7 +312,7 @@ export function LoginScreen({ onSuccess, onExit, authApi }: LoginScreenProps) {
             title="Nombre"
             border
             borderColor={borderColor}
-            width={48}
+            width={HELP_WIDTH}
             height={3}
             paddingLeft={1}
           >
@@ -195,7 +335,7 @@ export function LoginScreen({ onSuccess, onExit, authApi }: LoginScreenProps) {
           title="Email"
           border
           borderColor={borderColor}
-          width={48}
+          width={HELP_WIDTH}
           height={3}
           paddingLeft={1}
         >
@@ -217,7 +357,7 @@ export function LoginScreen({ onSuccess, onExit, authApi }: LoginScreenProps) {
           title="Contraseña"
           border
           borderColor={borderColor}
-          width={48}
+          width={HELP_WIDTH}
           height={3}
           paddingLeft={1}
         >
@@ -229,7 +369,13 @@ export function LoginScreen({ onSuccess, onExit, authApi }: LoginScreenProps) {
             focused={focused === "password" && !busy}
             onKeyDown={handleKeyDown}
             onContentChange={() => {
-              setPassword(passwordRef.current?.plainText ?? "");
+              if (syncingDisplayRef.current) return;
+              if (!passwordVisibleRef.current) return;
+              const plain = passwordRef.current?.plainText ?? "";
+              const masked = maskPassword(passwordValueRef.current);
+              if (plain === masked) return;
+              passwordValueRef.current = plain;
+              setPassword(plain);
             }}
             onSubmit={() => void handleSubmit()}
           />
@@ -240,9 +386,12 @@ export function LoginScreen({ onSuccess, onExit, authApi }: LoginScreenProps) {
         ) : busy ? (
           <text fg="#e0af68">Conectando…</text>
         ) : (
-          <text fg="#565f89">
-            Tab campos · Enter {submitLabel} · {modeHint} · Ctrl+C dos veces sale
-          </text>
+          <box width={HELP_WIDTH} flexDirection="column" alignItems="center">
+            <text fg="#565f89">Tab campos · Enter {submitLabel}</text>
+            <text fg="#565f89">{modeHint}</text>
+            <text fg="#565f89">{REVEAL_PASSWORD_HINT}</text>
+            <text fg="#565f89">Ctrl+C dos veces sale</text>
+          </box>
         )}
       </box>
     </box>

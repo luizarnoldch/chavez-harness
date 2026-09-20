@@ -7,6 +7,7 @@
   "scripts": {
     "dev:cli": "CHAVEZ_API_URL=http://localhost:28001 bun run --watch packages/cli/src/index.tsx",
     "dev:server": "bun run --hot packages/server/src/index.ts",
+    "dev:web": "bun run --filter @chavez-harness/web dev",
     "docker:up": "docker compose -f packages/server/docker-compose.yml --env-file packages/server/.env up --build -d",
     "docker:down": "docker compose -f packages/server/docker-compose.yml --env-file packages/server/.env down"
   },

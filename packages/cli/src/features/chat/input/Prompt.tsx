@@ -128,16 +128,20 @@ export function Prompt({
   });
 
   const syncLayout = useCallback(() => {
-    const textarea = textareaRef.current;
-    const lineCount = Math.max(textarea?.lineCount ?? 1, 1);
-    const nextHeight = computeBoxHeight(lineCount, terminalHeight);
-    const visibleRows = Math.max(nextHeight - BORDER_ROWS, 1);
-    setBoxHeight(nextHeight);
-    setScrollMetrics({
-      lineCount,
-      scrollY: textarea?.scrollY ?? 0,
-      visibleRows,
-    });
+    try {
+      const textarea = textareaRef.current;
+      const lineCount = Math.max(textarea?.lineCount ?? 1, 1);
+      const nextHeight = computeBoxHeight(lineCount, terminalHeight);
+      const visibleRows = Math.max(nextHeight - BORDER_ROWS, 1);
+      setBoxHeight(nextHeight);
+      setScrollMetrics({
+        lineCount,
+        scrollY: textarea?.scrollY ?? 0,
+        visibleRows,
+      });
+    } catch {
+      // EditBuffer may already be destroyed during shutdown (/exit, Ctrl+C).
+    }
   }, [terminalHeight]);
 
   useEffect(() => {
@@ -163,7 +167,11 @@ export function Prompt({
 
     clearSnapshotRef.current = current;
     historyRef.current = resetHistoryIndex(historyRef.current);
-    textareaRef.current?.clear();
+    try {
+      textareaRef.current?.clear();
+    } catch {
+      // EditBuffer may already be destroyed during shutdown.
+    }
     onValueChange("");
     onSelectedCommandIndexChange(0);
     syncLayout();
@@ -191,9 +199,17 @@ export function Prompt({
 
     const command = resolveCommand(text, selectedCommandIndex);
     if (command) {
-      void command.action?.(commandContext);
       rememberSubmit(text);
-      textareaRef.current?.clear();
+      if (command.name === "exit") {
+        void command.action?.(commandContext);
+        return;
+      }
+      void command.action?.(commandContext);
+      try {
+        textareaRef.current?.clear();
+      } catch {
+        // Buffer may already be gone if the action tore down the renderer.
+      }
       onValueChange("");
       onSelectedCommandIndexChange(0);
       resetCtrlCState();
@@ -209,7 +225,11 @@ export function Prompt({
 
     onSend(text);
     rememberSubmit(text);
-    textareaRef.current?.clear();
+    try {
+      textareaRef.current?.clear();
+    } catch {
+      // EditBuffer may already be destroyed during shutdown.
+    }
     onValueChange("");
     resetCtrlCState();
     syncLayout();

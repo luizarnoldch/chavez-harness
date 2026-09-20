@@ -1,5 +1,8 @@
 import { Hono } from "hono";
 import { upgradeWebSocket } from "hono/bun";
+import type { ChatService, WorkspaceService } from "../services/chat.ts";
+import type { ProviderCredentialsService } from "../services/providers.ts";
+import type { ProviderJobStore } from "../services/provider-jobs.ts";
 import { resolveWsUserId, type ResolveWsUserId } from "../ws/auth.ts";
 import { handleWsMessage, onConnectionClosed, type HandlerDeps } from "../ws/handlers.ts";
 import { createHeartbeatSweeper } from "../ws/heartbeat.ts";
@@ -10,6 +13,10 @@ export type WsRouteOptions = {
   resolveUserId?: ResolveWsUserId;
   hub?: Hub;
   pending?: PendingRegistry;
+  workspaces?: WorkspaceService;
+  chat?: ChatService;
+  providers?: ProviderCredentialsService;
+  jobs?: ProviderJobStore;
 };
 
 export function createWsRoute(options: WsRouteOptions = {}) {
@@ -19,7 +26,19 @@ export function createWsRoute(options: WsRouteOptions = {}) {
   const heartbeat = createHeartbeatSweeper(hub);
   heartbeat.start();
 
-  const deps: HandlerDeps = { hub, pending, heartbeat };
+  if (!options.workspaces || !options.chat || !options.providers || !options.jobs) {
+    throw new Error("createWsRoute requires workspaces, chat, providers, and jobs");
+  }
+
+  const deps: HandlerDeps = {
+    hub,
+    pending,
+    heartbeat,
+    workspaces: options.workspaces,
+    chat: options.chat,
+    providers: options.providers,
+    jobs: options.jobs,
+  };
   const route = new Hono();
 
   route.get("/ws", async (c, next) => {
@@ -45,6 +64,8 @@ export function createWsRoute(options: WsRouteOptions = {}) {
             workspacePath: null,
             daemonId: null,
             role: null,
+            machineId: null,
+            hostname: null,
             lastHeartbeatAt: Date.now(),
           });
         },
@@ -67,5 +88,3 @@ export function createWsRoute(options: WsRouteOptions = {}) {
 
   return { route, hub, pending, heartbeat, stop: () => heartbeat.stop() };
 }
-
-export const ws = createWsRoute().route;

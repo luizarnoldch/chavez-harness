@@ -8,10 +8,13 @@ Cada atajo se define una sola vez en el registro. La UI (status bar, prompt, Tab
 | Id | Teclas | Alcance | Qué hace |
 |----|--------|---------|----------|
 | `toggle-mode` | Tab | global | Alterna el modo entre Plan y Build |
+| `cycle-model` | Ctrl+M | global | Cicla el modelo entre local y cursor disponibles |
+| `toggle-status-panel` | Ctrl+U | global | Abre o cierra el panel de información de la barra de estado |
 | `submit` | Enter | prompt | Envía el mensaje o ejecuta el comando seleccionado |
 | `newline` | Shift+Enter | prompt | Inserta una línea nueva sin enviar |
 | `clear-or-exit` | Ctrl+C | prompt | Limpia el input si tiene texto. Con el input vacío, el primero pide confirmación y el segundo cierra; otra tecla cancela. En la pantalla de auth, doble Ctrl+C cierra la app |
 | `toggle-auth-mode` | Ctrl+R | auth | Alterna entre iniciar sesión y registrarse |
+| `reveal-password` | F2 | auth | Alterna mostrar u ocultar la contraseña en la pantalla de auth |
 | `focus-prompt` | Esc | global | Devuelve el foco al input del chat si un click lo perdió. No borra el texto |
 | `clear-input` | Esc | prompt | Limpia el input; Ctrl+Z lo restaura. No cierra la aplicación |
 | `restore-input` | Ctrl+Z | prompt | Restaura el texto borrado con Ctrl+C o Esc |

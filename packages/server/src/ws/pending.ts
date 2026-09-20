@@ -6,11 +6,11 @@ type PendingEntry = {
   timer: ReturnType<typeof setTimeout>;
 };
 
-export function createPendingRegistry(timeoutMs = DEFAULT_TIMEOUT_MS) {
+export function createPendingRegistry(defaultTimeoutMs = DEFAULT_TIMEOUT_MS) {
   const pending = new Map<string, PendingEntry>();
 
   return {
-    wait<T = unknown>(requestId: string): Promise<T> {
+    wait<T = unknown>(requestId: string, timeoutMs = defaultTimeoutMs): Promise<T> {
       return new Promise<T>((resolve, reject) => {
         if (pending.has(requestId)) {
           reject(new Error(`Duplicate pending requestId: ${requestId}`));

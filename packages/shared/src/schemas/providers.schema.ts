@@ -3,7 +3,26 @@ export type ModelPricing = {
   outputUsdPermillionTokens: number;
 }
 
-export type SupportedProvider = "antropic" | "cursor" | "openai" | "deepseek" | "grok";
+export type SupportedProvider = "antropic" | "cursor" | "openai" | "deepseek" | "grok" | "local";
+
+/** Providers the CLI /connect flow may offer (local is built-in mock). */
+export const CONNECTABLE_PROVIDERS = [
+  "cursor",
+  "openai",
+  "grok",
+  "antropic",
+] as const satisfies readonly SupportedProvider[];
+
+export type ConnectableProvider = (typeof CONNECTABLE_PROVIDERS)[number];
+
+export type ProviderCredentialStatus = {
+  provider: ConnectableProvider;
+  /** Implemented end-to-end in this release. */
+  supported: boolean;
+  configured: boolean;
+  /** Last 4 chars of the API key when configured. */
+  hint: string | null;
+};
 
 type SupportedChatModelDefinition = {
   id: string
@@ -12,6 +31,16 @@ type SupportedChatModelDefinition = {
 }
 
 export const SUPPORTED_CHAT_MODELS = [
+  // Local mock (server echo)
+  {
+    id: "eco",
+    provider: "local",
+    pricing: {
+      inputUsdPermillionTokens: 0,
+      outputUsdPermillionTokens: 0,
+    },
+  },
+
   // Anthropic Models
   {
     id: "claude-haiku-5",
@@ -480,8 +509,44 @@ export const SUPPORTED_CHAT_MODELS = [
 export type SupportedChatModel = (typeof SUPPORTED_CHAT_MODELS)[number];
 export type SupportedChatModelId = SupportedChatModel["id"];
 
+/** Providers with end-to-end generate in this release. */
+export const SELECTABLE_CHAT_PROVIDERS = ["local", "cursor"] as const satisfies readonly SupportedProvider[];
+
+export type SelectableChatProvider = (typeof SELECTABLE_CHAT_PROVIDERS)[number];
+
 export function findSupportedChatModelById(id: SupportedChatModelId): SupportedChatModel | undefined {
   return SUPPORTED_CHAT_MODELS.find((model) => model.id === id);
+}
+
+export function findSupportedChatModel(
+  provider: string,
+  id: string,
+): SupportedChatModel | undefined {
+  return SUPPORTED_CHAT_MODELS.find(
+    (model) => model.provider === provider && model.id === id,
+  );
+}
+
+/** Models the user can cycle/select for live chat (local + cursor). */
+export function listSelectableChatModels(): SupportedChatModel[] {
+  return SUPPORTED_CHAT_MODELS.filter((model) =>
+    (SELECTABLE_CHAT_PROVIDERS as readonly string[]).includes(model.provider),
+  );
+}
+
+export function nextSelectableChatModel(
+  provider: string,
+  modelId: string,
+): SupportedChatModel {
+  const selectable = listSelectableChatModels();
+  if (selectable.length === 0) {
+    return SUPPORTED_CHAT_MODELS[0]!;
+  }
+  const idx = selectable.findIndex(
+    (m) => m.provider === provider && m.id === modelId,
+  );
+  const next = selectable[(idx + 1) % selectable.length];
+  return next ?? selectable[0]!;
 }
 
 export const DEFAULT_CHAT_MODEL_ID: SupportedChatModelId = "auto";

@@ -52,5 +52,42 @@ export function assignClientRole(hub: Hub, connectionId: string) {
     clientKind: "client",
     daemonId: null,
     role: null,
+    machineId: null,
+    hostname: null,
   });
 }
+
+/**
+ * Bind as machine host. V1: one host per user — closes any other host sockets.
+ */
+export function assignHostRole(
+  hub: Hub,
+  connectionId: string,
+  machineId: string,
+  hostname: string | null,
+): { closedZombieIds: string[] } {
+  const conn = hub.get(connectionId);
+  if (!conn) return { closedZombieIds: [] };
+
+  const closedZombieIds: string[] = [];
+  for (const sibling of hub.listHosts(conn.userId)) {
+    if (sibling.connectionId === connectionId) continue;
+    sibling.socket.close(4000, "host reclaimed");
+    hub.unregister(sibling.connectionId);
+    closedZombieIds.push(sibling.connectionId);
+  }
+
+  hub.update(connectionId, {
+    clientKind: "host",
+    machineId,
+    hostname,
+    workspaceId: null,
+    workspacePath: null,
+    daemonId: null,
+    role: null,
+    lastHeartbeatAt: Date.now(),
+  });
+
+  return { closedZombieIds };
+}
+

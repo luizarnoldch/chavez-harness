@@ -1,45 +1,64 @@
-import { beforeEach, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import type { ChatSessionWithMessagesDto } from "@chavez-harness/shared";
 import { LOCAL_MODEL } from "../model";
-import {
-  appendAssistantTurn,
-  appendUserTurn,
-  createSession,
-  getSession,
-  resetSessions,
-  shortSessionId,
-} from "../store";
+import { sessionFromDto, shortSessionId } from "../store";
 
-describe("session store", () => {
-  beforeEach(() => {
-    resetSessions();
-  });
+describe("sessionFromDto", () => {
+  test("mapea mensajes user/assistant a turns", () => {
+    const dto: ChatSessionWithMessagesDto = {
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      workspaceId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      title: "hola",
+      mode: "build",
+      provider: "local",
+      model: LOCAL_MODEL,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      lastMessageAt: new Date().toISOString(),
+      messages: [
+        {
+          id: "m1",
+          chatSessionId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          role: "user",
+          mode: "build",
+          provider: "local",
+          model: LOCAL_MODEL,
+          status: "done",
+          error: null,
+          parts: [{ type: "text", text: "hola" }],
+          usage: null,
+          clientMessageId: null,
+          seq: 1,
+          createdAt: new Date().toISOString(),
+        },
+        {
+          id: "m2",
+          chatSessionId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          role: "assistant",
+          mode: "build",
+          provider: "local",
+          model: LOCAL_MODEL,
+          status: "done",
+          error: null,
+          parts: [{ type: "text", text: "hola" }],
+          usage: null,
+          clientMessageId: null,
+          seq: 2,
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    };
 
-  test("crea una sesión vacía y la recupera por id", () => {
-    const session = createSession();
-
-    expect(session.turns).toEqual([]);
-    expect(getSession(session.id)).toBe(session);
-    expect(shortSessionId(session.id)).toBe(session.id.slice(0, 8));
-  });
-
-  test("getSession devuelve undefined si el id no existe", () => {
-    expect(getSession("missing")).toBeUndefined();
-  });
-
-  test("agrega turnos de usuario y asistente", () => {
-    const session = createSession();
-    appendUserTurn(session.id, { text: "hola", mode: "build" });
-    appendAssistantTurn(session.id, { text: "hola", model: LOCAL_MODEL, status: "done" });
-
-    expect(getSession(session.id)?.turns).toEqual([
+    const session = sessionFromDto(dto);
+    expect(shortSessionId(session.id)).toBe("aaaaaaaa");
+    expect(session.turns).toEqual([
       expect.objectContaining({ role: "user", text: "hola", mode: "build" }),
-      expect.objectContaining({ role: "assistant", text: "hola", status: "done", model: LOCAL_MODEL }),
+      expect.objectContaining({
+        role: "assistant",
+        text: "hola",
+        status: "done",
+        model: LOCAL_MODEL,
+      }),
     ]);
-  });
-
-  test("resetSessions olvida las sesiones", () => {
-    const session = createSession();
-    resetSessions();
-    expect(getSession(session.id)).toBeUndefined();
   });
 });

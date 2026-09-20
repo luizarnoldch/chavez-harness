@@ -1,0 +1,27 @@
+---
+import Layout from "@/layouts/Layout.astro";
+import { SignUpForm } from "@/features/auth/SignUpForm";
+---
+
+<Layout title="Crear cuenta · Chavez">
+  <div
+    class="relative flex min-h-dvh flex-col justify-center px-4 py-10 sm:px-6"
+  >
+    <div
+      class="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top,_rgba(158,206,106,0.1),_transparent_55%)]"
+      aria-hidden="true"
+    >
+    </div>
+    <div class="relative mx-auto w-full max-w-md">
+      <div class="mb-8 text-center sm:mb-10">
+        <p class="text-primary text-sm font-medium tracking-wide uppercase">
+          Chavez Harness
+        </p>
+        <h1 class="mt-2 text-2xl font-semibold tracking-tight sm:text-3xl">
+          Nueva cuenta
+        </h1>
+      </div>
+      <SignUpForm client:load />
+    </div>
+  </div>
+</Layout>

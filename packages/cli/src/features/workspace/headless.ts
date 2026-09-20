@@ -6,6 +6,7 @@ const args = process.argv.slice(2);
 function usage() {
   console.error(`Usage:
   bun run src/features/workspace/headless.ts workspace open <path>
+  bun run src/features/workspace/headless.ts workspace host
 `);
   process.exit(1);
 }
@@ -27,11 +28,32 @@ async function workspaceOpen(pathArg: string) {
   process.exit(code);
 }
 
+async function workspaceHost() {
+  const hostEntry = fileURLToPath(new URL("./ws/host.ts", import.meta.url));
+  const child = Bun.spawn(["bun", "run", hostEntry], {
+    stdout: "inherit",
+    stderr: "inherit",
+    stdin: "ignore",
+    env: process.env,
+  });
+
+  console.error(`[headless] host started pid=${child.pid}`);
+
+  const code = await child.exited;
+  process.exit(code);
+}
+
 async function main() {
-  if (args[0] !== "workspace" || args[1] !== "open" || !args[2]) {
-    usage();
+  if (args[0] !== "workspace") usage();
+  if (args[1] === "open" && args[2]) {
+    await workspaceOpen(args[2]!);
+    return;
   }
-  await workspaceOpen(args[2]!);
+  if (args[1] === "host") {
+    await workspaceHost();
+    return;
+  }
+  usage();
 }
 
 main().catch((err) => {

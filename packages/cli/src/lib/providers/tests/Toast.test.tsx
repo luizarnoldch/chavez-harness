@@ -92,7 +92,5 @@ describe("/new", () => {
     });
 
     expect(seen.started).toBe(true);
-    expect(seen.message).toBe("Conversación reiniciada");
-    expect(seen.kind).toBe("success");
   });
 });

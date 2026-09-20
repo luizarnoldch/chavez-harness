@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
-import { loadCredentials } from "../../auth/api/credentials.ts";
+import { loadCredentials, type Credentials } from "../../auth/api/credentials.ts";
+import { runCursorSdkGenerate } from "./cursor-sdk.ts";
 import { ChavezWsClient } from "./client.ts";
 
 const HEARTBEAT_MS = 2_000;
@@ -21,6 +22,7 @@ async function main() {
   const daemonId = crypto.randomUUID();
   let workspaceId: string | null = null;
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  let generating = false;
 
   const client = new ChavezWsClient({
     apiUrl: credentials.apiUrl,
@@ -36,9 +38,95 @@ async function main() {
           ok: true,
           data: { pong: true, path },
         });
+        return;
+      }
+
+      if (message.type === "chat.generate.dispatch") {
+        void handleGenerate(message, credentials);
       }
     },
   });
+
+  async function handleGenerate(
+    message: Record<string, unknown>,
+    creds: Credentials,
+  ) {
+    const requestId = typeof message.requestId === "string" ? message.requestId : null;
+    if (!requestId) return;
+
+    if (generating) {
+      client.send({
+        type: "chat.generate.result",
+        requestId,
+        ok: false,
+        error: "Daemon ya está generando otra respuesta",
+      });
+      return;
+    }
+
+    generating = true;
+    try {
+      const sessionId =
+        typeof message.sessionId === "string" ? message.sessionId : "";
+      const wsId =
+        typeof message.workspaceId === "string"
+          ? message.workspaceId
+          : workspaceId ?? "";
+      const mode =
+        message.mode === "build" || message.mode === "plan"
+          ? message.mode
+          : "plan";
+
+      const outcome = await runCursorSdkGenerate({
+        credentials: creds,
+        jobId: String(message.jobId),
+        unwrapToken: String(message.unwrapToken),
+        model: String(message.model ?? "auto"),
+        prompt: String(message.prompt ?? ""),
+        workspacePath:
+          typeof message.path === "string" ? message.path : workspacePath,
+        mode,
+        agentId:
+          typeof message.agentId === "string" && message.agentId.length > 0
+            ? message.agentId
+            : null,
+        onProgress: (progress) => {
+          if (!requestId || !wsId || !sessionId) return;
+          client.send({
+            type: "chat.generate.progress",
+            requestId,
+            workspaceId: wsId,
+            sessionId,
+            phase: progress.phase,
+            ...(progress.textDelta != null
+              ? { textDelta: progress.textDelta }
+              : {}),
+          });
+        },
+      });
+      client.send({
+        type: "chat.generate.result",
+        requestId,
+        ok: true,
+        data: {
+          text: outcome.text,
+          agentId: outcome.agentId,
+          ...(outcome.usage ? { usage: outcome.usage } : {}),
+        },
+      });
+    } catch (err) {
+      const error = err instanceof Error ? err.message : "Cursor generate failed";
+      console.error("[daemon] chat.generate failed", error);
+      client.send({
+        type: "chat.generate.result",
+        requestId,
+        ok: false,
+        error,
+      });
+    } finally {
+      generating = false;
+    }
+  }
 
   async function bindAndStart() {
     await client.connect();
@@ -87,7 +175,6 @@ async function main() {
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
 
-  // Keep process alive
   await new Promise(() => {});
 }
 

@@ -1,0 +1,14 @@
+---
+export const prerender = false;
+import Layout from "@/layouts/Layout.astro";
+import { SessionsPage } from "@/features/sessions/SessionsPage";
+
+const { workspaceId } = Astro.params;
+if (!workspaceId) {
+  return Astro.redirect("/workspaces");
+}
+---
+
+<Layout title="Sesiones · Chavez">
+  <SessionsPage client:load workspaceId={workspaceId} />
+</Layout>

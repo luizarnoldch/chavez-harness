@@ -1,14 +1,8 @@
 import { redirect, type ActionFunctionArgs, type LoaderFunctionArgs } from "react-router";
 import type { AppMode } from "../../lib/types/mode";
-import { REPLY_ERROR_TEXT, mockReply } from "./mock-reply";
-import { LOCAL_MODEL } from "./model";
-import {
-  appendAssistantTurn,
-  appendUserTurn,
-  createSession,
-  getSession,
-  type Session,
-} from "./store";
+import { getWorkspaceBridge } from "../workspace/bridge";
+import { DEFAULT_SESSION_MODEL, DEFAULT_SESSION_PROVIDER } from "./model";
+import { sessionFromDto, type Session } from "./store";
 
 export type ReplyResult = { ok: true } | { ok: false; error: string };
 
@@ -18,16 +12,37 @@ export function rootLoader() {
   return redirect("/session/new");
 }
 
-export function newSessionLoader(): null {
-  return null;
+export async function newSessionLoader(): Promise<Session | null> {
+  const bridge = getWorkspaceBridge();
+  const state = bridge.getState();
+  if (state.status === "disconnected" || !state.workspaceId) {
+    return null;
+  }
+  if (state.chatSessionId) {
+    const cached = bridge.getSession(state.chatSessionId);
+    if (cached) return sessionFromDto(cached);
+  }
+  try {
+    const opened = await bridge.openLatestOrCreate();
+    return sessionFromDto(opened);
+  } catch {
+    return null;
+  }
 }
 
-export function sessionLoader({ params }: LoaderFunctionArgs): Session {
-  const session = params.id ? getSession(params.id) : undefined;
-  if (!session) {
+export async function sessionLoader({ params }: LoaderFunctionArgs): Promise<Session> {
+  const bridge = getWorkspaceBridge();
+  const id = params.id;
+  if (!id) {
     throw new Response(NOT_FOUND, { status: 404, statusText: NOT_FOUND });
   }
-  return session;
+
+  try {
+    const opened = await bridge.openSession(id);
+    return sessionFromDto(opened);
+  } catch {
+    throw new Response(NOT_FOUND, { status: 404, statusText: NOT_FOUND });
+  }
 }
 
 export async function newSessionAction({ request }: ActionFunctionArgs) {
@@ -36,14 +51,27 @@ export async function newSessionAction({ request }: ActionFunctionArgs) {
     return { ok: false as const, error: "Mensaje vacío" };
   }
 
-  const session = createSession();
-  await recordExchange(session.id, submission.text, submission.mode, submission.model);
+  const bridge = getWorkspaceBridge();
+  const session = await bridge.createSession();
+  const result = await bridge.sendMessage({
+    chatSessionId: session.id,
+    text: submission.text,
+    mode: submission.mode,
+    model: submission.model,
+    provider: submission.provider,
+    clientMessageId: crypto.randomUUID(),
+  });
+
+  if (!result.ok) {
+    return { ok: false as const, error: result.error ?? "Error al enviar" };
+  }
+
   return redirect(`/session/${session.id}`);
 }
 
 export async function sessionAction({ request, params }: ActionFunctionArgs): Promise<ReplyResult> {
-  const session = params.id ? getSession(params.id) : undefined;
-  if (!session) {
+  const sessionId = params.id;
+  if (!sessionId) {
     throw new Response(NOT_FOUND, { status: 404, statusText: NOT_FOUND });
   }
 
@@ -52,34 +80,31 @@ export async function sessionAction({ request, params }: ActionFunctionArgs): Pr
     return { ok: false, error: "Mensaje vacío" };
   }
 
-  return recordExchange(session.id, submission.text, submission.mode, submission.model);
-}
+  const bridge = getWorkspaceBridge();
+  const result = await bridge.sendMessage({
+    chatSessionId: sessionId,
+    text: submission.text,
+    mode: submission.mode,
+    model: submission.model,
+    provider: submission.provider,
+    clientMessageId: crypto.randomUUID(),
+  });
 
-async function recordExchange(
-  sessionId: string,
-  text: string,
-  mode: AppMode,
-  model: string,
-): Promise<ReplyResult> {
-  appendUserTurn(sessionId, { text, mode });
-  try {
-    const reply = await mockReply(text);
-    appendAssistantTurn(sessionId, { text: reply, model, status: "done" });
-    return { ok: true };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : REPLY_ERROR_TEXT;
-    appendAssistantTurn(sessionId, { text: "", model, status: "error", error: message });
-    return { ok: false, error: message };
+  if (!result.ok) {
+    return { ok: false, error: result.error ?? "Error al enviar" };
   }
+  return { ok: true };
 }
 
 async function readSubmission(
   request: Request,
-): Promise<{ text: string; mode: AppMode; model: string } | null> {
+): Promise<{ text: string; mode: AppMode; model: string; provider: string } | null> {
   const form = await request.formData();
   const text = String(form.get("text") ?? "").trim();
   if (!text) return null;
   const mode: AppMode = form.get("mode") === "build" ? "build" : "plan";
-  const model = String(form.get("model") ?? "").trim() || LOCAL_MODEL;
-  return { text, mode, model };
+  const model = String(form.get("model") ?? "").trim() || DEFAULT_SESSION_MODEL;
+  const provider =
+    String(form.get("provider") ?? "").trim() || DEFAULT_SESSION_PROVIDER;
+  return { text, mode, model, provider };
 }

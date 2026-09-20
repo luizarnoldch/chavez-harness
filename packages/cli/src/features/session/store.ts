@@ -1,4 +1,10 @@
+import type {
+  ChatMessageDto,
+  ChatMessageUsage,
+  ChatSessionWithMessagesDto,
+} from "@chavez-harness/shared";
 import type { AppMode } from "../../lib/types/mode";
+import { messageToTurnText } from "../workspace/bridge.ts";
 
 export type UserTurn = {
   id: string;
@@ -12,8 +18,10 @@ export type AssistantTurn = {
   role: "assistant";
   text: string;
   model: string;
+  provider: string | null;
   status: "done" | "error";
   error?: string;
+  usage?: ChatMessageUsage | null;
 };
 
 export type Turn = UserTurn | AssistantTurn;
@@ -21,68 +29,50 @@ export type Turn = UserTurn | AssistantTurn;
 export type Session = {
   id: string;
   turns: Turn[];
+  provider: string;
+  model: string;
+  mode: AppMode;
 };
 
-const sessions = new Map<string, Session>();
-
-function nextId(): string {
-  return crypto.randomUUID();
-}
-
-export function createSession(): Session {
-  const session: Session = { id: nextId(), turns: [] };
-  sessions.set(session.id, session);
-  return session;
-}
-
-export function getSession(id: string): Session | undefined {
-  return sessions.get(id);
-}
-
-export function appendUserTurn(
-  sessionId: string,
-  input: { text: string; mode: AppMode },
-): UserTurn {
-  const session = requireSession(sessionId);
-  const turn: UserTurn = {
-    id: nextId(),
-    role: "user",
-    text: input.text,
-    mode: input.mode,
+export function sessionFromDto(dto: ChatSessionWithMessagesDto): Session {
+  return {
+    id: dto.id,
+    provider: dto.provider,
+    model: dto.model,
+    mode: dto.mode,
+    turns: dto.messages.map(messageToTurn).filter((t): t is Turn => t != null),
   };
-  session.turns.push(turn);
-  return turn;
 }
 
-export function appendAssistantTurn(
-  sessionId: string,
-  input: { text: string; model: string; status: "done" | "error"; error?: string },
-): AssistantTurn {
-  const session = requireSession(sessionId);
-  const turn: AssistantTurn = {
-    id: nextId(),
-    role: "assistant",
-    text: input.text,
-    model: input.model,
-    status: input.status,
-    ...(input.error ? { error: input.error } : {}),
-  };
-  session.turns.push(turn);
-  return turn;
-}
-
-export function resetSessions(): void {
-  sessions.clear();
+function messageToTurn(message: ChatMessageDto): Turn | null {
+  if (message.role === "user") {
+    return {
+      id: message.id,
+      role: "user",
+      text: messageToTurnText(message),
+      mode: (message.mode as AppMode) ?? "plan",
+    };
+  }
+  if (message.role === "assistant") {
+    return {
+      id: message.id,
+      role: "assistant",
+      text: messageToTurnText(message),
+      model: message.model ?? "auto",
+      provider: message.provider,
+      status: message.status === "error" ? "error" : "done",
+      usage: message.usage,
+      ...(message.error ? { error: message.error } : {}),
+    };
+  }
+  return null;
 }
 
 export function shortSessionId(id: string): string {
   return id.slice(0, 8);
 }
 
-function requireSession(sessionId: string): Session {
-  const session = sessions.get(sessionId);
-  if (!session) {
-    throw new Error("Sesión no encontrada");
-  }
-  return session;
+/** Test helper — clears nothing remote; local tests use bridge reset. */
+export function resetSessions(): void {
+  // no-op local cache; bridge owns sessions
 }

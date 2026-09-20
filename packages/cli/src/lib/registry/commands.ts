@@ -10,7 +10,14 @@ export const COMMANDS: Command[] = [
     value: "/new",
     action: (ctx: CommandContext) => {
       ctx.newSession();
-      ctx.toast("Conversación reiniciada", "success");
+    },
+  },
+  {
+    name: "sessions",
+    description: "Listar conversaciones del workspace",
+    value: "/sessions",
+    action: (ctx: CommandContext) => {
+      ctx.dialog.open("sessions");
     },
   },
   {
@@ -19,6 +26,14 @@ export const COMMANDS: Command[] = [
     value: "/exit",
     action: (ctx: CommandContext) => {
       ctx.exit();
+    },
+  },
+  {
+    name: "connect",
+    description: "Conectar provider (API key)",
+    value: "/connect",
+    action: (ctx: CommandContext) => {
+      ctx.dialog.open("connect");
     },
   },
   {

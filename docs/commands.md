@@ -8,7 +8,9 @@ El menú y el submit leen `COMMANDS`. No copies esta tabla en otros documentos.
 | Comando | Qué hace | Nombre |
 |---------|----------|--------|
 | `/new` | Nueva conversación | `new` |
+| `/sessions` | Listar conversaciones del workspace | `sessions` |
 | `/exit` | Salir de la aplicación | `exit` |
+| `/connect` | Conectar provider (API key) | `connect` |
 | `/models` | Elige el modelo del chat | `models` |
 | `/logout` | Cerrar sesión | `logout` |
 

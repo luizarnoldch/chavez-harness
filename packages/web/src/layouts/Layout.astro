@@ -1,0 +1,29 @@
+---
+import "@/styles/global.css";
+import { Toaster } from "@/components/ui/sonner";
+
+type Props = {
+  title?: string;
+  description?: string;
+};
+
+const title = Astro.props.title ?? "Chavez Harness";
+const description =
+  Astro.props.description ?? "Workspaces y chat sincronizados con el TUI";
+---
+
+<!doctype html>
+<html lang="es" class="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="generator" content={Astro.generator} />
+    <meta name="description" content={description} />
+    <title>{title}</title>
+  </head>
+  <body class="min-h-dvh bg-background text-foreground">
+    <slot />
+    <Toaster richColors position="top-center" client:load />
+  </body>
+</html>

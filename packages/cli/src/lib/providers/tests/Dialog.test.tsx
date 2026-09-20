@@ -15,7 +15,16 @@ function Harness({
     onReady({ open, close });
   }, [onReady, open, close]);
   if (current !== "models") return null;
-  return <ModelsDialog onClose={close} />;
+  return (
+    <ModelsDialog
+      onClose={close}
+      onSelect={() => {
+        close();
+      }}
+      currentProvider="cursor"
+      currentModel="auto"
+    />
+  );
 }
 
 describe("dialog", () => {
@@ -32,7 +41,7 @@ describe("dialog", () => {
           }}
         />
       </DialogProvider>,
-      { width: 40, height: 6 },
+      { width: 40, height: 12 },
     );
 
     try {
@@ -73,5 +82,53 @@ describe("/models", () => {
     });
 
     expect(seen.id).toBe("models");
+  });
+});
+
+describe("ModelsDialog", () => {
+  test("lista modelos con provider visible", async () => {
+    const setup = await testRender(
+      <ModelsDialog
+        currentProvider="cursor"
+        currentModel="auto"
+        onClose={() => {}}
+        onSelect={() => {}}
+      />,
+      { width: 50, height: 12 },
+    );
+
+    try {
+      await act(async () => {
+        await setup.renderOnce();
+      });
+      const frame = setup.captureCharFrame();
+      expect(frame).toContain("cursor · auto");
+      expect(frame).toContain("local · eco");
+    } finally {
+      setup.renderer.destroy();
+    }
+  });
+});
+
+describe("/connect", () => {
+  test("abre el diálogo connect", () => {
+    const command = COMMANDS.find((item) => item.name === "connect");
+    if (!command?.action) throw new Error("/connect sin action");
+
+    const seen = { id: "" };
+    command.action({
+      exit() {},
+      newSession() {},
+      logout() {},
+      toast() {},
+      dialog: {
+        open(id) {
+          seen.id = id;
+        },
+        close() {},
+      },
+    });
+
+    expect(seen.id).toBe("connect");
   });
 });

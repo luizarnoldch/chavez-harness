@@ -124,4 +124,27 @@ describe("prompt Ctrl+C exit confirmation", () => {
       setup.renderer.destroy();
     }
   });
+
+  test("/exit submit llama exit sin lanzar EditBuffer destroyed", async () => {
+    const { setup, textarea, exitCount } = await mountPrompt();
+
+    try {
+      await act(async () => {
+        textarea.focus();
+        await setup.mockInput.typeText("/exit");
+        await setup.renderOnce();
+      });
+
+      await act(async () => {
+        setup.mockInput.pressEnter();
+        await setup.renderOnce();
+      });
+
+      expect(exitCount()).toBe(1);
+      // Early-return skips clear when exiting.
+      expect(textarea.plainText).toBe("/exit");
+    } finally {
+      setup.renderer.destroy();
+    }
+  });
 });

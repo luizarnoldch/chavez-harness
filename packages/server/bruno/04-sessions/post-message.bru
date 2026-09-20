@@ -1,0 +1,30 @@
+meta {
+  name: Post message
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/sessions/{{sessionId}}/messages
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "text": "hola desde bruno",
+    "mode": "plan"
+  }
+}
+
+assert {
+  res.status: eq 200
+}
