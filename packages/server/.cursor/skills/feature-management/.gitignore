@@ -1,0 +1,2 @@
+# Vendored jq binaries (downloaded by ensure_jq on first use)
+scripts/.vendor/

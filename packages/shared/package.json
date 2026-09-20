@@ -1,0 +1,14 @@
+{
+  "name": "@chavez-harness/shared",
+  "type": "module",
+  "version": "0.0.1",
+  "private": true,
+  "exports": {
+    ".": {
+      "import": "./src/index.js"
+    }
+  },
+  "dependencies": {
+    "zod": "^4.6.5"
+  }
+}

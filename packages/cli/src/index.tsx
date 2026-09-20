@@ -1,16 +1,18 @@
-import { createCliRenderer, TextAttributes } from "@opentui/core";
 import { createRoot } from "@opentui/react";
+import { RouterProvider } from "react-router";
+import { renderer } from "./renderer";
+import { router } from "./routes";
+import { DialogProvider } from "./providers/Dialog";
+import { ToastProvider } from "./providers/Toast";
 
 function App() {
   return (
-    <box alignItems="center" justifyContent="center" flexGrow={1}>
-      <box justifyContent="center" alignItems="flex-end">
-        <ascii-font font="tiny" text="OpenTUI" />
-        <text attributes={TextAttributes.DIM}>What will you build?</text>
-      </box>
-    </box>
+    <ToastProvider>
+      <DialogProvider>
+        <RouterProvider router={router} />
+      </DialogProvider>
+    </ToastProvider>
   );
 }
 
-const renderer = await createCliRenderer();
 createRoot(renderer).render(<App />);

@@ -1,0 +1,2 @@
+# Feature action history (append-only). Managed by feature-cli.
+# Format: [ISO8601] ACTION (feature_id): details

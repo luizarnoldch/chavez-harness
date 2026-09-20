@@ -1,0 +1,15 @@
+# Per-sprint archive
+# Managed by feature-management skill (feature-cli.sh). Prefer CLI over hand-edits.
+# One file per sprint under features/sprints/{N}.yml
+
+project:
+  title: ""
+  acronym: ""
+
+sprint:
+  number: 1
+  start: ""
+  end: ""
+  closed_at: ""
+
+archive: []

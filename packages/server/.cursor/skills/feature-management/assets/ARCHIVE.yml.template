@@ -1,0 +1,14 @@
+# Legacy flat archive (no longer written by feature-cli).
+# Archived features now live under features/sprints/{N}.yml
+# If this file still has entries, init/validate will migrate them once.
+
+project:
+  title: ""
+  acronym: ""
+
+sprint:
+  number: 1
+  start: ""
+  end: ""
+
+archive: []

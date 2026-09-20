@@ -1,0 +1,25 @@
+{
+  "version": "1.0.0",
+  "hooks": {
+    "beforeShellExecution": [],
+    "sessionStart": [],
+    "sessionEnd": [],
+    "preToolUse": [],
+    "postToolUse": [],
+    "postToolUseFailure": [],
+    "subagentStart": [],
+    "subagentStop": [],
+    "beforeMCPExecution": [],
+    "afterMCPExecution": [],
+    "beforeReadFile": [],
+    "afterFileEdit": [],
+    "beforeSubmitPrompt": [],
+    "preCompact": [],
+    "stop": [],
+    "afterAgentResponse": [],
+    "afterAgentThought": [],
+    "beforeTabFileRead": [],
+    "afterTabFileEdit": [],
+    "workspaceOpen": []
+  }
+}

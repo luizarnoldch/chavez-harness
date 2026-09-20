@@ -1,0 +1,13 @@
+# Active feature registry
+# Managed by feature-management skill (feature-cli.sh). Prefer CLI over hand-edits.
+
+project:
+  title: ""
+  acronym: ""
+
+sprint:
+  number: 1
+  start: ""
+  end: ""
+
+features: []
