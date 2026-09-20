@@ -1,5 +1,6 @@
 import { createRoot } from "@opentui/react";
 import { RouterProvider } from "react-router";
+import { AuthGate } from "./auth/AuthGate";
 import { renderer } from "./renderer";
 import { router } from "./routes";
 import { DialogProvider } from "./providers/Dialog";
@@ -9,7 +10,9 @@ function App() {
   return (
     <ToastProvider>
       <DialogProvider>
-        <RouterProvider router={router} />
+        <AuthGate>
+          <RouterProvider router={router} />
+        </AuthGate>
       </DialogProvider>
     </ToastProvider>
   );

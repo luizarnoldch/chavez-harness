@@ -1,0 +1,32 @@
+meta {
+  name: Sign in email
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/api/auth/sign-in/email
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "email": "{{email}}",
+    "password": "{{password}}"
+  }
+}
+
+script:post-response {
+  if (res.body && res.body.token) {
+    bru.setVar("token", res.body.token);
+  }
+}
+
+assert {
+  res.status: eq 200
+}

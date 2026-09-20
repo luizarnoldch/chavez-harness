@@ -10,6 +10,7 @@ El menú y el submit leen `COMMANDS`. No copies esta tabla en otros documentos.
 | `/new` | Nueva conversación | `new` |
 | `/exit` | Salir de la aplicación | `exit` |
 | `/models` | Elige el modelo del chat | `models` |
+| `/logout` | Cerrar sesión | `logout` |
 
 ## Cómo añadir un comando
 

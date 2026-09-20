@@ -15,6 +15,7 @@ import type { Session } from "../session/store";
 import { shortSessionId } from "../session/store";
 import type { CommandContext } from "../types/commands";
 import { renderer } from "../renderer";
+import { useAuth } from "../auth/AuthGate";
 import { useDialog } from "../providers/Dialog";
 import { useToast } from "../providers/Toast";
 import { LOCAL_MODEL } from "../session/model";
@@ -32,6 +33,7 @@ export function Shell() {
   const [promptValue, setPromptValue] = useState("");
   const [selectedCommandIndex, setSelectedCommandIndex] = useState(0);
   const { show } = useToast();
+  const { logout } = useAuth();
   const dialog = useDialog();
   const navigate = useNavigate();
   const submit = useSubmit();
@@ -50,10 +52,11 @@ export function Shell() {
       newSession: () => {
         navigate("/session/new");
       },
+      logout,
       toast: show,
       dialog: { open: dialog.open, close: dialog.close },
     }),
-    [show, dialog.open, dialog.close, navigate],
+    [show, dialog.open, dialog.close, navigate, logout],
   );
 
   useKeyboard((key) => {

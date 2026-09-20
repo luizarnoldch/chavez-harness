@@ -1,0 +1,6 @@
+{
+  "version": "1",
+  "name": "chavez-harness-server",
+  "type": "collection",
+  "ignore": ["node_modules", ".git"]
+}

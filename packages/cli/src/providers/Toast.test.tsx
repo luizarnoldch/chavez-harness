@@ -87,6 +87,7 @@ describe("/new", () => {
         seen.message = message;
         seen.kind = kind;
       },
+      logout() {},
       dialog: { open() {}, close() {} },
     });
 

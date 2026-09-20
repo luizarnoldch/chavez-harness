@@ -1,4 +1,4 @@
-export type ShortcutScope = "global" | "prompt" | "command-menu";
+export type ShortcutScope = "global" | "prompt" | "command-menu" | "auth";
 
 export type ShortcutChord = {
   name: string;
@@ -50,9 +50,16 @@ export const SHORTCUTS: Shortcut[] = [
   {
     id: "clear-or-exit",
     label: "Ctrl+C",
-    description: "Limpia el input si tiene texto. Con el input vacío, el primero pide confirmación y el segundo cierra; otra tecla cancela",
+    description: "Limpia el input si tiene texto. Con el input vacío, el primero pide confirmación y el segundo cierra; otra tecla cancela. En la pantalla de auth, doble Ctrl+C cierra la app",
     scope: "prompt",
     keys: [{ name: "c", ctrl: true }],
+  },
+  {
+    id: "toggle-auth-mode",
+    label: "Ctrl+R",
+    description: "Alterna entre iniciar sesión y registrarse",
+    scope: "auth",
+    keys: [{ name: "r", ctrl: true }],
   },
   {
     id: "focus-prompt",

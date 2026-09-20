@@ -27,6 +27,7 @@ async function mountPrompt() {
             exits += 1;
           },
           newSession() {},
+          logout() {},
           toast() {},
           dialog: { open() {}, close() {} },
         }}

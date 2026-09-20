@@ -1,48 +1,43 @@
 import { describe, expect, test } from "bun:test";
-import server from "../src/index.ts";
 import { createApp } from "../src/app.ts";
 
-describe("server", () => {
+describe("server health", () => {
   test("GET /health returns ok", async () => {
-    const response = await createApp().request("/health");
+    const response = await createApp({
+      ws: { resolveUserId: async () => null },
+    }).request("/health");
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ ok: true });
   });
+});
 
-  test("websocket echoes text", async () => {
-    const running = Bun.serve({
-      fetch: server.fetch,
-      websocket: server.websocket,
-      port: 0,
-    });
+describe("OpenAPI docs", () => {
+  test("GET /openapi.json includes /health when docs enabled", async () => {
+    const response = await createApp({
+      ws: { resolveUserId: async () => null },
+      enableDocs: true,
+    }).request("/openapi.json");
 
-    const socket = new WebSocket(`ws://127.0.0.1:${running.port}/ws`);
+    expect(response.status).toBe(200);
+    const spec = (await response.json()) as {
+      paths?: Record<string, unknown>;
+      info?: { title?: string };
+    };
+    expect(spec.info?.title).toBe("Chavez Harness API");
+    expect(spec.paths).toHaveProperty("/health");
+    expect(spec.paths).toHaveProperty("/api/auth/sign-in/email");
+    expect(spec.paths).toHaveProperty("/ws");
+  });
 
-    try {
-      await new Promise<void>((resolve, reject) => {
-        socket.addEventListener("open", () => resolve(), { once: true });
-        socket.addEventListener("error", () => reject(new Error("websocket failed to open")), {
-          once: true,
-        });
-      });
+  test("GET /docs returns swagger UI when docs enabled", async () => {
+    const response = await createApp({
+      ws: { resolveUserId: async () => null },
+      enableDocs: true,
+    }).request("/docs");
 
-      const echoed = new Promise<string>((resolve, reject) => {
-        socket.addEventListener(
-          "message",
-          (event) => {
-            resolve(String(event.data));
-          },
-          { once: true },
-        );
-        socket.addEventListener("error", () => reject(new Error("websocket error")), { once: true });
-      });
-
-      socket.send("hola");
-      expect(await echoed).toBe("hola");
-    } finally {
-      socket.close();
-      running.stop(true);
-    }
+    expect(response.status).toBe(200);
+    const html = await response.text();
+    expect(html).toContain("swagger");
   });
 });

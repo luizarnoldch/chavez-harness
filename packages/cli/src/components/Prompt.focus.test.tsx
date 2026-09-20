@@ -16,7 +16,7 @@ async function mountPrompt() {
   const setup = await testRender(
     <box flexDirection="column" width="100%" height="100%">
       <Prompt
-        commandContext={{ exit() {}, newSession() {}, toast() {}, dialog: { open() {}, close() {} } }}
+        commandContext={{ exit() {}, newSession() {}, logout() {}, toast() {}, dialog: { open() {}, close() {} } }}
         selectedCommandIndex={0}
         onSelectedCommandIndexChange={() => {}}
         onValueChange={() => {}}

@@ -29,4 +29,13 @@ export const COMMANDS: Command[] = [
       ctx.dialog.open("models");
     },
   },
+  {
+    name: "logout",
+    description: "Cerrar sesión",
+    value: "/logout",
+    action: (ctx: CommandContext) => {
+      void ctx.logout();
+      ctx.toast("Sesión cerrada", "success");
+    },
+  },
 ];

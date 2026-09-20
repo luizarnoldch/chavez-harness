@@ -62,6 +62,7 @@ describe("/models", () => {
     command.action({
       exit() {},
       newSession() {},
+      logout() {},
       toast() {},
       dialog: {
         open(id) {

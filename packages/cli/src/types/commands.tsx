@@ -3,6 +3,7 @@ import type { ToastKind } from "../providers/Toast";
 export type CommandContext = {
   exit: () => void;
   newSession: () => void;
+  logout: () => void | Promise<void>;
   toast: (message: string, kind: ToastKind) => void;
   dialog: {
     open: (id: string) => void;
