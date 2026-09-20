@@ -26,7 +26,7 @@ No hay socket directo entre web/TUI y el daemon. Ambos abren `GET /ws?token=...`
 1. **Auth HTTP** — el TUI muestra `LoginScreen` al arrancar (`AuthGate`): login (`POST /api/auth/sign-in/email`) o registro (`POST /api/auth/sign-up/email`, `Ctrl+R` para alternar). Session token en `~/.config/chavez/credentials.json`. En esa vista, doble `Ctrl+C` confirma la salida.
 2. **HTTP posterior** — `Authorization: Bearer <token>`.
 3. **WS** — mismo token en `?token=`; el upgrade valida con Better Auth (plugin `bearer` + cookie).
-4. **Daemon** — `bun run headless workspace open <path>` (desde `packages/cli`) spawnea `ws/daemon.ts`, hace `workspace.bind` (`clientKind: daemon`) y responde `workspace.ping.dispatch`.
+4. **Daemon** — `bun run headless workspace open <path>` (desde `packages/cli`) spawnea `features/workspace/daemon.ts`, hace `workspace.bind` (`clientKind: daemon`) y responde `workspace.ping.dispatch`.
 
 ```mermaid
 sequenceDiagram
@@ -87,9 +87,13 @@ Una sola columna (tras login):
 
 | Ruta | Rol |
 |------|-----|
-| `cli/src/auth/` | Credenciales, sign-in HTTP, AuthGate |
-| `cli/src/ws/` | WsClient, reconnect, daemon |
-| `cli/src/commands/headless.ts` | `workspace open` |
+| `cli/src/app/` | Bootstrap, routes, Shell |
+| `cli/src/features/auth/api/` | Credenciales, sign-in/up HTTP |
+| `cli/src/features/auth/ui/` | AuthGate, LoginScreen |
+| `cli/src/features/chat/` | `pane/`, `input/`, `chrome/`, `dialogs/` + `tests/` |
+| `cli/src/features/session/` | Store in-memory, handlers, mock reply + `tests/` |
+| `cli/src/features/workspace/` | `ws/` (client, reconnect, daemon), headless + `tests/` |
+| `cli/src/lib/` | Registry, providers, types; tests en `tests/` / `providers/tests/` |
 | `server/src/ws/` | hub, handlers, pending, heartbeat |
 | `server/src/routes/ws.ts` | Upgrade autenticado |
 | `shared/src/ws/protocol.ts` | Schemas Zod del wire |

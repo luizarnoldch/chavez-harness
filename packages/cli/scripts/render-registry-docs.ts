@@ -1,8 +1,8 @@
 import { writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { COMMANDS } from "../src/registry/commands";
-import { SHORTCUTS } from "../src/registry/shortcuts";
+import { COMMANDS } from "../src/lib/registry/commands";
+import { SHORTCUTS } from "../src/lib/registry/shortcuts";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const docsDir = join(repoRoot, "docs");
@@ -23,7 +23,7 @@ function shortcutsDoc(): string {
   return [
     "# Atajos de teclado",
     "",
-    generatedNote("packages/cli/src/registry/shortcuts.ts"),
+    generatedNote("packages/cli/src/lib/registry/shortcuts.ts"),
     "Cada atajo se define una sola vez en el registro. La UI (status bar, prompt, Tab) lee ese archivo.",
     "",
     "| Id | Teclas | Alcance | Qué hace |",
@@ -41,7 +41,7 @@ function commandsDoc(): string {
   return [
     "# Slash commands",
     "",
-    generatedNote("packages/cli/src/registry/commands.ts"),
+    generatedNote("packages/cli/src/lib/registry/commands.ts"),
     "El menú y el submit leen `COMMANDS`. No copies esta tabla en otros documentos.",
     "",
     "| Comando | Qué hace | Nombre |",
@@ -50,15 +50,15 @@ function commandsDoc(): string {
     "",
     "## Cómo añadir un comando",
     "",
-    "1. Si hace falta una capacidad nueva, amplía `CommandContext` en [`packages/cli/src/types/commands.tsx`](../packages/cli/src/types/commands.tsx).",
-    "2. Añade una entrada en [`packages/cli/src/registry/commands.ts`](../packages/cli/src/registry/commands.ts) con `name`, `description` (español), `value` y `action`.",
+    "1. Si hace falta una capacidad nueva, amplía `CommandContext` en [`packages/cli/src/lib/types/commands.ts`](../packages/cli/src/lib/types/commands.ts).",
+    "2. Añade una entrada en [`packages/cli/src/lib/registry/commands.ts`](../packages/cli/src/lib/registry/commands.ts) con `name`, `description` (español), `value` y `action`.",
     "3. Regenera esta página: `cd packages/cli && bun run docs:registry`.",
     "4. No toques el menú: se lista y filtra solo.",
     "",
     "Dentro de `action`, avisa con `ctx.toast(\"...\", \"success\" | \"info\" | \"error\")`. El texto y el tipo los decide el comando.",
     "Dentro de `action`, abre un diálogo con `ctx.dialog.open(\"id\")` y ciérralo con `ctx.dialog.close()`.",
     "",
-    "El filtro está en [`getFilterCommands`](../packages/cli/src/constants/filter-commands.tsx) (nombre o descripción, sin distinguir mayúsculas).",
+    "El filtro está en [`getFilterCommands`](../packages/cli/src/lib/filter-commands.ts) (nombre o descripción, sin distinguir mayúsculas).",
     "",
     "## Resolución al enviar",
     "",

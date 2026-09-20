@@ -24,15 +24,16 @@ cd packages/cli && bun run docs:registry
 
 | Ruta | Qué tocar |
 |------|-----------|
-| `packages/cli/src/registry/shortcuts.ts` | Atajos de teclado (fuente de verdad) |
-| `packages/cli/src/registry/commands.ts` | Slash commands (fuente de verdad) |
-| `packages/cli/src/index.tsx` | Layout root, Tab → mode, estado |
-| `packages/cli/src/components/StatusBar.tsx` | Chips Plan/Build, hints |
-| `packages/cli/src/components/MessageList.tsx` | Historial echo |
-| `packages/cli/src/components/CommandMenu.tsx` | Lista `/` (máx. 8 visibles) |
-| `packages/cli/src/components/Prompt.tsx` | Input, altura ≤25%, lee atajos del registro |
-| `packages/cli/src/constants/filter-commands.tsx` | Filtro del catálogo |
-| `packages/cli/src/types/commands.tsx` | `Command` / `CommandContext` |
+| `packages/cli/src/lib/registry/shortcuts.ts` | Atajos de teclado (fuente de verdad) |
+| `packages/cli/src/lib/registry/commands.ts` | Slash commands (fuente de verdad) |
+| `packages/cli/src/index.tsx` | Entry TUI (providers + AuthGate + router) |
+| `packages/cli/src/app/Shell.tsx` | Layout root, Tab → mode, estado |
+| `packages/cli/src/features/chat/chrome/StatusBar.tsx` | Chips Plan/Build, hints |
+| `packages/cli/src/features/chat/pane/MessageList.tsx` | Historial echo |
+| `packages/cli/src/features/chat/input/CommandMenu.tsx` | Lista `/` (máx. 8 visibles) |
+| `packages/cli/src/features/chat/input/Prompt.tsx` | Input, altura ≤25%, lee atajos del registro |
+| `packages/cli/src/lib/filter-commands.ts` | Filtro del catálogo |
+| `packages/cli/src/lib/types/commands.ts` | `Command` / `CommandContext` |
 
 ## Convenciones
 
@@ -40,7 +41,9 @@ cd packages/cli && bun run docs:registry
 - Antes de inventar APIs OpenTUI, consulta skills en `packages/cli/.cursor/skills/` (`opentui-components`, `opentui-react`, `opentui-testing`).
 - **Paleta** en uso: chrome `#1f2335` / `#414868` / `#7aa2f7`; Plan `#e0af68`; Build `#9ece6a`.
 - Copy de UI orientada al usuario: **español** (placeholders, vacíos, hints).
-- Documentación humana: `docs/` (empezar por `docs/README.md`). Atajos y comandos solo en `packages/cli/src/registry/`; regenerar con `cd packages/cli && bun run docs:registry`.
+- Documentación humana: `docs/` (empezar por `docs/README.md`). Atajos y comandos solo en `packages/cli/src/lib/registry/`; regenerar con `cd packages/cli && bun run docs:registry`.
+- Layout CLI: `app/` (bootstrap/shell), `features/*` (auth, chat, session, workspace), `lib/` (registry, providers, types).
+- Dentro de cada feature: código en subcarpetas por responsabilidad; **tests solo en `tests/`** (nunca junto al `.ts`/`.tsx`).
 
 ## No hacer (salvo que el usuario lo pida)
 

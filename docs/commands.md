@@ -1,7 +1,7 @@
 # Slash commands
 
 > Generado por `bun run docs:registry` en `packages/cli`. No edites la tabla a mano.
-> Fuente: `packages/cli/src/registry/commands.ts`.
+> Fuente: `packages/cli/src/lib/registry/commands.ts`.
 
 El menú y el submit leen `COMMANDS`. No copies esta tabla en otros documentos.
 
@@ -14,15 +14,15 @@ El menú y el submit leen `COMMANDS`. No copies esta tabla en otros documentos.
 
 ## Cómo añadir un comando
 
-1. Si hace falta una capacidad nueva, amplía `CommandContext` en [`packages/cli/src/types/commands.tsx`](../packages/cli/src/types/commands.tsx).
-2. Añade una entrada en [`packages/cli/src/registry/commands.ts`](../packages/cli/src/registry/commands.ts) con `name`, `description` (español), `value` y `action`.
+1. Si hace falta una capacidad nueva, amplía `CommandContext` en [`packages/cli/src/lib/types/commands.ts`](../packages/cli/src/lib/types/commands.ts).
+2. Añade una entrada en [`packages/cli/src/lib/registry/commands.ts`](../packages/cli/src/lib/registry/commands.ts) con `name`, `description` (español), `value` y `action`.
 3. Regenera esta página: `cd packages/cli && bun run docs:registry`.
 4. No toques el menú: se lista y filtra solo.
 
 Dentro de `action`, avisa con `ctx.toast("...", "success" | "info" | "error")`. El texto y el tipo los decide el comando.
 Dentro de `action`, abre un diálogo con `ctx.dialog.open("id")` y ciérralo con `ctx.dialog.close()`.
 
-El filtro está en [`getFilterCommands`](../packages/cli/src/constants/filter-commands.tsx) (nombre o descripción, sin distinguir mayúsculas).
+El filtro está en [`getFilterCommands`](../packages/cli/src/lib/filter-commands.ts) (nombre o descripción, sin distinguir mayúsculas).
 
 ## Resolución al enviar
 

@@ -1,7 +1,7 @@
 # Atajos de teclado
 
 > Generado por `bun run docs:registry` en `packages/cli`. No edites la tabla a mano.
-> Fuente: `packages/cli/src/registry/shortcuts.ts`.
+> Fuente: `packages/cli/src/lib/registry/shortcuts.ts`.
 
 Cada atajo se define una sola vez en el registro. La UI (status bar, prompt, Tab) lee ese archivo.
 

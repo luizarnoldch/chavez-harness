@@ -8,7 +8,7 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "docs:registry": "bun run scripts/render-registry-docs.ts",
-    "headless": "bun run src/commands/headless.ts"
+    "headless": "bun run src/features/workspace/headless.ts"
   },
   "devDependencies": {
     "@types/bun": "1.3.14",
