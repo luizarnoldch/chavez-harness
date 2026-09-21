@@ -5,7 +5,6 @@ import type {
   ChatMessageDto,
   ChatSessionDto,
   ChatSessionWithMessagesDto,
-  WorkspaceConnection,
 } from "@chavez-harness/shared";
 import { toast } from "sonner";
 import { getSessionWithMessages, getWorkspace } from "@/lib/api";
@@ -13,11 +12,8 @@ import { ChavezWsClient } from "@/lib/ws-client";
 import { AuthShell } from "@/features/auth/AuthShell";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  PresencePanel,
-  type DaemonStatus,
-  type PresenceState,
-} from "@/features/workspaces/PresencePanel";
+import { PresencePanel } from "@/features/workspaces/PresencePanel";
+import { useWorkspacePresence } from "@/features/workspaces/useWorkspacePresence";
 
 function textFromParts(parts: ChatMessageDto["parts"]): string {
   return parts
@@ -38,6 +34,29 @@ function mergeMessages(
   return [...byId.values()].sort((a, b) => a.seq - b.seq);
 }
 
+function optimisticUserMessage(
+  sessionId: string,
+  text: string,
+  mode: "plan" | "build",
+  clientMessageId: string,
+): ChatMessageDto {
+  return {
+    id: `optimistic-${clientMessageId}`,
+    chatSessionId: sessionId,
+    role: "user",
+    mode,
+    provider: null,
+    model: null,
+    status: "pending",
+    error: null,
+    parts: [{ type: "text", text }],
+    usage: null,
+    clientMessageId,
+    seq: Number.MAX_SAFE_INTEGER - 1,
+    createdAt: new Date().toISOString(),
+  };
+}
+
 type ChatSendResult = {
   session: ChatSessionDto;
   userMessage: ChatMessageDto;
@@ -54,13 +73,21 @@ export function ChatPage({ sessionId }: ChatPageProps) {
   const [messages, setMessages] = useState<ChatMessageDto[]>([]);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
-  const [generating, setGenerating] = useState(false);
+  const [streamDraft, setStreamDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [live, setLive] = useState<"connecting" | "live" | "offline">("connecting");
-  const [presence, setPresence] = useState<PresenceState | null>(null);
+  const [workspacePath, setWorkspacePath] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const clientRef = useRef<ChavezWsClient | null>(null);
-  const workspacePathRef = useRef<string | null>(null);
+  const pendingClientMsgId = useRef<string | null>(null);
+
+  const {
+    presence,
+    activate,
+    deactivate,
+    controlling,
+    controlError,
+  } = useWorkspacePresence(session?.workspaceId ?? null, workspacePath);
 
   const mode = session?.mode ?? "plan";
 
@@ -97,8 +124,22 @@ export function ChatPage({ sessionId }: ChatPageProps) {
             message?: ChatMessageDto;
           };
           if (data.session?.id !== sessionId || !data.message) return;
-          setMessages((prev) => mergeMessages(prev, [data.message!]));
-          if (data.message.role === "assistant") setGenerating(false);
+          const message = data.message;
+          setMessages((prev) => {
+            let next = prev;
+            if (
+              message.role === "user" &&
+              message.clientMessageId &&
+              pendingClientMsgId.current === message.clientMessageId
+            ) {
+              next = prev.filter((m) => m.id !== `optimistic-${message.clientMessageId}`);
+              pendingClientMsgId.current = null;
+            }
+            return mergeMessages(next, [message]);
+          });
+          if (message.role === "assistant") {
+            setStreamDraft("");
+          }
         }
         if (msg.type === "session.updated") {
           const data = msg.data as { id?: string };
@@ -106,36 +147,18 @@ export function ChatPage({ sessionId }: ChatPageProps) {
             setSession((prev) => (prev ? { ...prev, ...data } : prev));
           }
         }
-        if (msg.type === "connection.status") {
-          const data = msg.data as {
-            workspaceId?: string;
-            daemon?: DaemonStatus;
-            connections?: WorkspaceConnection[];
-          };
-          if (data.workspaceId !== workspaceId) return;
-          setPresence({
-            daemon: data.daemon ?? "offline",
-            connections: data.connections ?? [],
-          });
-        }
-        if (msg.type === "daemon.presence") {
-          const data = msg.data as {
-            workspaceId?: string;
-            status?: DaemonStatus;
-          };
-          if (data.workspaceId !== workspaceId || !data.status) return;
-          setPresence((prev) => ({
-            daemon: data.status!,
-            connections: prev?.connections ?? [],
-          }));
-        }
         if (msg.type === "chat.generate.progress") {
-          const data = msg.data as { sessionId?: string; phase?: string };
+          const data = msg.data as {
+            sessionId?: string;
+            phase?: string;
+            textDelta?: string;
+          };
           if (data.sessionId !== sessionId) return;
+          if (data.phase === "streaming" && data.textDelta) {
+            setStreamDraft((prev) => prev + data.textDelta);
+          }
           if (data.phase === "done" || data.phase === "error") {
-            setGenerating(false);
-          } else {
-            setGenerating(true);
+            setStreamDraft("");
           }
         }
       },
@@ -146,7 +169,7 @@ export function ChatPage({ sessionId }: ChatPageProps) {
       try {
         const workspace = await getWorkspace(workspaceId);
         if (cancelled) return;
-        workspacePathRef.current = workspace.path;
+        setWorkspacePath(workspace.path);
         await client.connect();
         if (cancelled) return;
         await client.request("workspace.bind", {
@@ -154,18 +177,11 @@ export function ChatPage({ sessionId }: ChatPageProps) {
           clientKind: "client",
         });
         if (cancelled) return;
-        const sync = await client.request<{
-          daemonStatus: DaemonStatus;
-          connections?: WorkspaceConnection[];
-        }>("workspace.sync", {
+        await client.request("workspace.sync", {
           workspaceId,
           chatSessionId: sessionId,
         });
         if (cancelled) return;
-        setPresence({
-          daemon: sync.daemonStatus,
-          connections: sync.connections ?? [],
-        });
         setLive("live");
       } catch {
         if (!cancelled) setLive("offline");
@@ -181,7 +197,7 @@ export function ChatPage({ sessionId }: ChatPageProps) {
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length, generating]);
+  }, [messages.length, streamDraft]);
 
   const title = useMemo(
     () => session?.title?.trim() || "Chat",
@@ -195,32 +211,47 @@ export function ChatPage({ sessionId }: ChatPageProps) {
 
     const client = clientRef.current;
     if (!client || live !== "live") {
-      toast.error("Sin enlace al workspace; abre el TUI / daemon y recarga.");
+      toast.error("Sin enlace al workspace; abre el Host / daemon y recarga.");
       return;
     }
 
+    const clientMessageId = crypto.randomUUID();
+    pendingClientMsgId.current = clientMessageId;
+    const optimistic = optimisticUserMessage(sessionId, text, mode, clientMessageId);
+
     setSending(true);
-    setGenerating(true);
+    setStreamDraft("");
     setDraft("");
+    setMessages((prev) => [...prev, optimistic]);
+
     try {
       const result = await client.request<ChatSendResult>("chat.send", {
         chatSessionId: sessionId,
         text,
         mode,
-        clientMessageId: crypto.randomUUID(),
+        clientMessageId,
       });
-      setMessages((prev) =>
-        mergeMessages(prev, [result.userMessage, result.assistantMessage]),
-      );
+      pendingClientMsgId.current = null;
+      setMessages((prev) => {
+        const withoutOptimistic = prev.filter(
+          (m) => m.id !== `optimistic-${clientMessageId}`,
+        );
+        return mergeMessages(withoutOptimistic, [
+          result.userMessage,
+          result.assistantMessage,
+        ]);
+      });
       setSession((prev) =>
         prev ? { ...prev, ...result.session, messages: prev.messages } : prev,
       );
-      if (result.assistantMessage.status !== "pending") {
-        setGenerating(false);
-      }
+      setStreamDraft("");
     } catch (err) {
+      pendingClientMsgId.current = null;
+      setMessages((prev) =>
+        prev.filter((m) => m.id !== `optimistic-${clientMessageId}`),
+      );
       setDraft(text);
-      setGenerating(false);
+      setStreamDraft("");
       toast.error(err instanceof Error ? err.message : "No se pudo enviar");
     } finally {
       setSending(false);
@@ -250,8 +281,19 @@ export function ChatPage({ sessionId }: ChatPageProps) {
               {live === "live" ? "En vivo" : live === "connecting" ? "Conectando…" : "Sin sync"}
             </span>
           </div>
-          <PresencePanel presence={presence} compact />
+          <PresencePanel
+            presence={presence}
+            compact
+            onActivate={() => void activate()}
+            onDeactivate={() => void deactivate()}
+            controlling={controlling}
+            controlError={controlError}
+          />
           <p className="text-muted-foreground text-[11px] leading-snug">
+            Modo {mode === "build" ? "Build" : "Plan"}:{" "}
+            {mode === "build"
+              ? "herramientas completas del agente (lectura, edición, shell, web…)."
+              : "solo lectura (sin escritura ni shell)."}{" "}
             El TUI muestra el chat en vivo solo si tiene abierta esta misma sesión.
           </p>
         </div>
@@ -263,7 +305,7 @@ export function ChatPage({ sessionId }: ChatPageProps) {
         ) : null}
 
         <div className="min-h-0 flex-1 overflow-y-auto rounded-xl border border-border/80 bg-card/40 px-3 py-3">
-          {messages.length === 0 ? (
+          {messages.length === 0 && !streamDraft ? (
             <p className="text-muted-foreground py-8 text-center text-sm">
               Sin mensajes todavía. Escribe abajo o usa el TUI.
             </p>
@@ -302,11 +344,19 @@ export function ChatPage({ sessionId }: ChatPageProps) {
                   </li>
                 );
               })}
+              {streamDraft ? (
+                <li className="flex justify-start">
+                  <div className="bg-secondary text-secondary-foreground max-w-[92%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed whitespace-pre-wrap">
+                    <p className="mb-1 text-[10px] font-medium tracking-wide uppercase opacity-70">
+                      Asistente
+                    </p>
+                    {streamDraft}
+                    <span className="ml-0.5 inline-block animate-pulse">▍</span>
+                  </div>
+                </li>
+              ) : null}
             </ul>
           )}
-          {generating ? (
-            <p className="text-muted-foreground mt-3 text-center text-xs">Generando…</p>
-          ) : null}
           <div ref={bottomRef} />
         </div>
 

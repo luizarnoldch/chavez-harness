@@ -101,7 +101,10 @@ export function SessionFooter({
         <ModeChip label="Plan" active={mode === "plan"} activeColor={PLAN_COLOR} />
         <text> </text>
         <ModeChip label="Build" active={mode === "build"} activeColor={BUILD_COLOR} />
-      </box>
+        <text> </text>
+        <text attributes={TextAttributes.DIM}>
+          {mode === "plan" ? "solo lectura" : "herramientas completas"}
+        </text>      </box>
     </box>
   );
 }

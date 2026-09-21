@@ -23,7 +23,7 @@ export const SHORTCUTS: Shortcut[] = [
   {
     id: "toggle-mode",
     label: "Tab",
-    description: "Alterna el modo entre Plan y Build",
+    description: "Alterna Plan (solo lectura) y Build (herramientas completas)",
     scope: "global",
     keys: [{ name: "tab" }],
     hint: "Tab modo",
@@ -91,6 +91,14 @@ export const SHORTCUTS: Shortcut[] = [
     scope: "global",
     keys: [{ name: "escape" }],
     hint: "Esc foco",
+  },
+  {
+    id: "sessions-delete",
+    label: "Ctrl+D",
+    description: "En el listado /sessions, elimina la conversación seleccionada",
+    scope: "global",
+    keys: [{ name: "d", ctrl: true }],
+    hint: "Ctrl+D borrar sesión",
   },
   {
     id: "clear-input",

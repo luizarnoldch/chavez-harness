@@ -1,5 +1,6 @@
 import { describe, expect, mock, test } from "bun:test";
 import type { SDKAgent } from "@cursor/sdk";
+import { CURSOR_PLAN_TOOLS } from "@chavez-harness/shared";
 import type { Credentials } from "../../../auth/api/credentials.ts";
 import {
   progressFromSdkMessage,
@@ -70,8 +71,8 @@ describe("cursor-sdk helpers", () => {
     expect(usageFromRunResult({})).toBeUndefined();
   });
 
-  test("toolsForChatMode is empty only for plan", () => {
-    expect(toolsForChatMode("plan")).toEqual([]);
+  test("toolsForChatMode is read-only allowlist for plan", () => {
+    expect(toolsForChatMode("plan")).toEqual([...CURSOR_PLAN_TOOLS]);
     expect(toolsForChatMode("build")).toBeUndefined();
     expect(toolsForChatMode(undefined)).toBeUndefined();
   });
@@ -211,7 +212,7 @@ describe("runCursorSdkGenerate (mocked Agent)", () => {
     }
   });
 
-  test("plan mode passes tools: [] on create", async () => {
+  test("plan mode passes read-only tools on create", async () => {
     const restore = mockFetchUnwrap();
     const create = mock(async () => makeAgent("agent-plan", "ok"));
     const resume = mock(async () => makeAgent("x", "nope"));
@@ -234,7 +235,74 @@ describe("runCursorSdkGenerate (mocked Agent)", () => {
         apiKey: "sk-test",
         model: { id: "auto" },
         local: { cwd: "/tmp/ws" },
-        tools: [],
+        tools: [...CURSOR_PLAN_TOOLS],
+      });
+    } finally {
+      restore();
+    }
+  });
+
+  test("plan mode passes read-only tools on resume", async () => {
+    const restore = mockFetchUnwrap();
+    const send = mock(async () =>
+      ({
+        supports: () => false,
+        wait: async () => ({ status: "finished", result: "ok" }),
+      }) as never,
+    );
+    const create = mock(async () => makeAgent("agent-new", "create"));
+    const resume = mock(async () => makeAgent("agent-prev", "ok", send));
+    const factory: CursorAgentFactory = { create, resume };
+
+    try {
+      await runCursorSdkGenerate(
+        {
+          credentials,
+          jobId: "11111111-1111-4111-8111-111111111111",
+          unwrapToken: "unwrap",
+          model: "auto",
+          prompt: "sigue",
+          workspacePath: "/tmp/ws",
+          mode: "plan",
+          agentId: "agent-prev",
+        },
+        factory,
+      );
+      expect(resume).toHaveBeenCalledWith("agent-prev", {
+        apiKey: "sk-test",
+        model: { id: "auto" },
+        local: { cwd: "/tmp/ws" },
+        tools: [...CURSOR_PLAN_TOOLS],
+      });
+      expect(create).toHaveBeenCalledTimes(0);
+    } finally {
+      restore();
+    }
+  });
+
+  test("build mode omits tools on create", async () => {
+    const restore = mockFetchUnwrap();
+    const create = mock(async () => makeAgent("agent-build", "ok"));
+    const resume = mock(async () => makeAgent("x", "nope"));
+    const factory: CursorAgentFactory = { create, resume };
+
+    try {
+      await runCursorSdkGenerate(
+        {
+          credentials,
+          jobId: "11111111-1111-4111-8111-111111111111",
+          unwrapToken: "unwrap",
+          model: "auto",
+          prompt: "hola",
+          workspacePath: "/tmp/ws",
+          mode: "build",
+        },
+        factory,
+      );
+      expect(create).toHaveBeenCalledWith({
+        apiKey: "sk-test",
+        model: { id: "auto" },
+        local: { cwd: "/tmp/ws" },
       });
     } finally {
       restore();

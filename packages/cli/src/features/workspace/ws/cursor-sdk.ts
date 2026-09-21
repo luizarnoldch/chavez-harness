@@ -1,5 +1,9 @@
-import { Agent, CursorAgentError, type SDKAgent, type SDKMessage } from "@cursor/sdk";
-import type { ChatMessageUsage, ChatMode } from "@chavez-harness/shared";
+import { Agent, CursorAgentError, type SDKAgent, type SDKMessage, type ToolName } from "@cursor/sdk";
+import {
+  cursorToolsForChatMode,
+  type ChatMessageUsage,
+  type ChatMode,
+} from "@chavez-harness/shared";
 import { apiFetch } from "../../auth/api/api.ts";
 import type { Credentials } from "../../auth/api/credentials.ts";
 
@@ -35,7 +39,7 @@ type AgentCreateOptions = {
   apiKey: string;
   model: { id: string };
   local: { cwd: string };
-  tools?: [];
+  tools?: ToolName[];
 };
 
 export type CursorAgentFactory = {
@@ -59,9 +63,13 @@ export function resolveCursorModelId(model: string): string {
   return trimmed;
 }
 
-/** Plan mode is chat-only: omit built-in tool schemas to cut prompt tokens. */
-export function toolsForChatMode(mode: ChatMode | undefined): [] | undefined {
-  return mode === "plan" ? [] : undefined;
+/**
+ * Plan: read-only SDK tools. Build (or unset): omit tools so the full default
+ * toolset applies (must re-pass on every create/resume — SDK does not persist).
+ */
+export function toolsForChatMode(mode: ChatMode | undefined): ToolName[] | undefined {
+  const tools = cursorToolsForChatMode(mode);
+  return tools ? [...tools] : undefined;
 }
 
 /** Map SDK run result to assistant text (testable without live Agent). */
@@ -169,13 +177,13 @@ async function openAgent(
   modelId: string,
   workspacePath: string,
   agentId: string | null | undefined,
-  tools: [] | undefined,
+  tools: ToolName[] | undefined,
 ): Promise<SDKAgent> {
   const base = {
     apiKey,
     model: { id: modelId },
     local: { cwd: workspacePath },
-    ...(tools ? { tools } : {}),
+    ...(tools !== undefined ? { tools } : {}),
   } satisfies AgentCreateOptions;
 
   if (agentId) {

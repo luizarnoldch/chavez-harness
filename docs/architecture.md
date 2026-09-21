@@ -28,7 +28,7 @@ Providers LLM: API keys cifradas en `user_provider_credential` (AES-GCM). Seed p
 | Provider | Dónde corre | Runtime |
 |----------|-------------|---------|
 | `local` | server | echo mock |
-| `cursor` | daemon (`chat.generate.*`) | `@cursor/sdk` con `local: { cwd }` + `Agent.resume` entre turns (`chat_session.cursor_agent_id`) |
+| `cursor` | daemon (`chat.generate.*`) | `@cursor/sdk` con `local: { cwd }` + `Agent.resume` entre turns (`chat_session.cursor_agent_id`). **Plan** = allowlist de tools de lectura (`CURSOR_PLAN_TOOLS`); **Build** = toolset default completo del SDK (`tools` omitido). |
 | `openai` / `antropic` / `grok` | (futuro) server | AI SDK `generateText` / API directa — aún stubs |
 
 Defaults de sesión nueva: **provider `cursor`**, **model `auto`**. Sin API key → error pidiendo `/connect`.

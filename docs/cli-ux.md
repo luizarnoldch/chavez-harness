@@ -5,11 +5,12 @@ Comportamiento implementado hasta ahora en `@chavez-harness/cli`.
 ## Modos Plan / Build
 
 - **Tab** alterna entre `plan` y `build`.
-- Chips en la status bar:
-  - Plan activo: `#e0af68` (amarillo)
-  - Build activo: `#9ece6a` (verde)
+- Chips en el footer de sesión:
+  - Plan activo: `#e0af68` (amarillo) — tools SDK de solo lectura
+  - Build activo: `#9ece6a` (verde) — toolset completo del SDK
+  - Hint dim: «solo lectura» / «herramientas completas»
   - Inactivo: fondo `#2a2e3f`, texto dim
-- Cada mensaje echo guarda el `mode` vigente y se muestra como `[plan]` / `[build]`.
+- Cada mensaje guarda el `mode` vigente y se muestra como `[plan]` / `[build]`.
 
 Paleta de chrome alineada a Tokyo Night: `#1f2335`, `#414868`, `#7aa2f7`.
 
