@@ -59,7 +59,7 @@ export async function newSessionAction({ request }: ActionFunctionArgs) {
     mode: submission.mode,
     model: submission.model,
     provider: submission.provider,
-    clientMessageId: crypto.randomUUID(),
+    clientMessageId: submission.clientMessageId,
   });
 
   if (!result.ok) {
@@ -87,7 +87,7 @@ export async function sessionAction({ request, params }: ActionFunctionArgs): Pr
     mode: submission.mode,
     model: submission.model,
     provider: submission.provider,
-    clientMessageId: crypto.randomUUID(),
+    clientMessageId: submission.clientMessageId,
   });
 
   if (!result.ok) {
@@ -98,7 +98,13 @@ export async function sessionAction({ request, params }: ActionFunctionArgs): Pr
 
 async function readSubmission(
   request: Request,
-): Promise<{ text: string; mode: AppMode; model: string; provider: string } | null> {
+): Promise<{
+  text: string;
+  mode: AppMode;
+  model: string;
+  provider: string;
+  clientMessageId: string;
+} | null> {
   const form = await request.formData();
   const text = String(form.get("text") ?? "").trim();
   if (!text) return null;
@@ -106,5 +112,7 @@ async function readSubmission(
   const model = String(form.get("model") ?? "").trim() || DEFAULT_SESSION_MODEL;
   const provider =
     String(form.get("provider") ?? "").trim() || DEFAULT_SESSION_PROVIDER;
-  return { text, mode, model, provider };
+  const clientMessageId =
+    String(form.get("clientMessageId") ?? "").trim() || crypto.randomUUID();
+  return { text, mode, model, provider, clientMessageId };
 }

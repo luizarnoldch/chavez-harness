@@ -258,6 +258,36 @@ export function createApiRoutes(options: ApiRoutesOptions) {
     },
   );
 
+  app.delete(
+    "/api/sessions/:sessionId",
+    zValidator("param", z.object({ sessionId: z.string().uuid() })),
+    async (c) => {
+      const { sessionId } = c.req.valid("param");
+      const user = c.get("user");
+      try {
+        const deleted = await chat.deleteSession(user.id, sessionId);
+        hub?.broadcastToWorkspace(user.id, deleted.workspaceId, {
+          push: true,
+          eventId: crypto.randomUUID(),
+          type: "session.deleted",
+          data: {
+            workspaceId: deleted.workspaceId,
+            chatSessionId: deleted.sessionId,
+          },
+        });
+        return c.json({
+          workspaceId: deleted.workspaceId,
+          chatSessionId: deleted.sessionId,
+        });
+      } catch (err) {
+        if (err instanceof ChatNotFoundError) {
+          return c.json({ error: err.message }, 404);
+        }
+        throw err;
+      }
+    },
+  );
+
   app.post(
     "/api/sessions/:sessionId/messages",
     zValidator("param", z.object({ sessionId: z.string().uuid() })),
@@ -284,6 +314,11 @@ export function createApiRoutes(options: ApiRoutesOptions) {
           provider: body.provider,
           model: body.model,
           clientMessageId: body.clientMessageId,
+          onUserMessagePersisted: hub
+            ? async ({ session, userMessage, workspaceId }) => {
+                emitMessagePushes(hub, user.id, workspaceId, session, [userMessage]);
+              }
+            : undefined,
           generateReply:
             hub && pending && providers && jobs
               ? async (ctx) =>
@@ -306,7 +341,6 @@ export function createApiRoutes(options: ApiRoutesOptions) {
         });
         if (result.created) {
           emitMessagePushes(hub, user.id, result.session.workspaceId, result.session, [
-            result.userMessage,
             result.assistantMessage,
           ]);
         }

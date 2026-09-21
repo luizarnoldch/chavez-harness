@@ -27,7 +27,7 @@ describe("sessionFromDto", () => {
           error: null,
           parts: [{ type: "text", text: "hola" }],
           usage: null,
-          clientMessageId: null,
+          clientMessageId: "cid-user-1",
           seq: 1,
           createdAt: new Date().toISOString(),
         },
@@ -52,13 +52,76 @@ describe("sessionFromDto", () => {
     const session = sessionFromDto(dto);
     expect(shortSessionId(session.id)).toBe("aaaaaaaa");
     expect(session.turns).toEqual([
-      expect.objectContaining({ role: "user", text: "hola", mode: "build" }),
+      expect.objectContaining({
+        role: "user",
+        text: "hola",
+        mode: "build",
+        clientMessageId: "cid-user-1",
+      }),
       expect.objectContaining({
         role: "assistant",
         text: "hola",
         status: "done",
         model: LOCAL_MODEL,
+        toolCalls: [],
       }),
     ]);
+  });
+
+  test("mapea tool-call parts a toolCalls del turn", () => {
+    const dto: ChatSessionWithMessagesDto = {
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      workspaceId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      title: null,
+      mode: "plan",
+      provider: "cursor",
+      model: "auto",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      lastMessageAt: null,
+      messages: [
+        {
+          id: "m1",
+          chatSessionId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          role: "assistant",
+          mode: "plan",
+          provider: "cursor",
+          model: "auto",
+          status: "done",
+          error: null,
+          parts: [
+            {
+              type: "tool-call",
+              id: "tc-1",
+              name: "read",
+              args: { path: "a.ts" },
+              result: "ok",
+            },
+            { type: "text", text: "listo" },
+          ],
+          usage: null,
+          clientMessageId: null,
+          seq: 1,
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    };
+
+    const session = sessionFromDto(dto);
+    expect(session.turns[0]).toEqual(
+      expect.objectContaining({
+        role: "assistant",
+        text: "listo",
+        toolCalls: [
+          {
+            type: "tool-call",
+            id: "tc-1",
+            name: "read",
+            args: { path: "a.ts" },
+            result: "ok",
+          },
+        ],
+      }),
+    );
   });
 });

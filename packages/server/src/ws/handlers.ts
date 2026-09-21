@@ -1,5 +1,6 @@
 import {
   NO_DAEMON_ERROR,
+  NO_HOST_ERROR,
   incomingWsMessageSchema,
   type ChatGenerateResult,
   type DaemonPresencePush,
@@ -14,10 +15,14 @@ import { resolveProviderReply } from "../services/resolve-provider-reply.ts";
 import type { ProviderCredentialsService } from "../services/providers.ts";
 import type { ProviderJobStore } from "../services/provider-jobs.ts";
 import { assignClientRole, assignDaemonRole, assignHostRole } from "./bind-role.ts";
-import { applyDaemonDesired } from "./daemon-desired.ts";
+import { applyDaemonDesired, reconcileDesiredDaemons } from "./daemon-desired.ts";
 import type { Hub, HubConnection } from "./hub.ts";
 import type { HeartbeatSweeper } from "./heartbeat.ts";
 import type { PendingRegistry } from "./pending.ts";
+
+function noDaemonOrHostError(hub: Hub, userId: string): string {
+  return hub.findHost(userId) ? NO_DAEMON_ERROR : NO_HOST_ERROR;
+}
 
 function reply(type: string, id: string, ok: boolean, data?: unknown, error?: string): WsReply {
   return { type, id, ok, data, error };
@@ -190,6 +195,12 @@ export async function handleWsMessage(
           hostname: msg.hostname ?? null,
           status: "online",
         });
+        void reconcileDesiredDaemons({
+          hub,
+          pending,
+          workspaces,
+          userId: conn.userId,
+        });
         return;
       }
 
@@ -295,7 +306,13 @@ export async function handleWsMessage(
         if (!daemon || !daemon.workspacePath) {
           hub.sendTo(
             conn.connectionId,
-            reply("workspace.ping", msg.id, false, undefined, NO_DAEMON_ERROR),
+            reply(
+              "workspace.ping",
+              msg.id,
+              false,
+              undefined,
+              noDaemonOrHostError(hub, conn.userId),
+            ),
           );
           return;
         }
@@ -365,6 +382,7 @@ export async function handleWsMessage(
             sessionId: msg.sessionId,
             phase: msg.phase,
             ...(msg.textDelta != null ? { textDelta: msg.textDelta } : {}),
+            ...(msg.toolCall != null ? { toolCall: msg.toolCall } : {}),
           },
         });
         return;
@@ -432,6 +450,16 @@ export async function handleWsMessage(
           provider: msg.provider,
           model: msg.model,
           clientMessageId: msg.clientMessageId,
+          onUserMessagePersisted: async ({ session, userMessage, workspaceId }) => {
+            emitMessages(
+              hub,
+              conn.userId,
+              workspaceId,
+              session,
+              [userMessage],
+              conn.connectionId,
+            );
+          },
           generateReply: async (ctx) =>
             resolveProviderReply(
               {
@@ -456,7 +484,7 @@ export async function handleWsMessage(
             conn.userId,
             sendResult.session.workspaceId,
             sendResult.session,
-            [sendResult.userMessage, sendResult.assistantMessage],
+            [sendResult.assistantMessage],
             conn.connectionId,
           );
           hub.broadcastToWorkspace(
@@ -473,6 +501,27 @@ export async function handleWsMessage(
         }
 
         hub.sendTo(conn.connectionId, reply("chat.send", msg.id, true, sendResult));
+        return;
+      }
+
+      case "session.delete": {
+        const deleted = await chat.deleteSession(conn.userId, msg.chatSessionId);
+        hub.broadcastToWorkspace(conn.userId, deleted.workspaceId, {
+          push: true,
+          eventId: crypto.randomUUID(),
+          type: "session.deleted",
+          data: {
+            workspaceId: deleted.workspaceId,
+            chatSessionId: deleted.sessionId,
+          },
+        });
+        hub.sendTo(
+          conn.connectionId,
+          reply("session.delete", msg.id, true, {
+            workspaceId: deleted.workspaceId,
+            chatSessionId: deleted.sessionId,
+          }),
+        );
         return;
       }
     }

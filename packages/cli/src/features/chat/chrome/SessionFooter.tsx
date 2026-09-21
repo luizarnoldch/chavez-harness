@@ -98,13 +98,18 @@ export function SessionFooter({
           onMouseDown={onOpenModels}
         />
         <text> </text>
-        <ModeChip label="Plan" active={mode === "plan"} activeColor={PLAN_COLOR} />
+        <ModeChip
+          label={mode === "plan" ? "Plan · solo lectura" : "Plan"}
+          active={mode === "plan"}
+          activeColor={PLAN_COLOR}
+        />
         <text> </text>
-        <ModeChip label="Build" active={mode === "build"} activeColor={BUILD_COLOR} />
-        <text> </text>
-        <text attributes={TextAttributes.DIM}>
-          {mode === "plan" ? "solo lectura" : "herramientas completas"}
-        </text>      </box>
+        <ModeChip
+          label={mode === "build" ? "Build · completo" : "Build"}
+          active={mode === "build"}
+          activeColor={BUILD_COLOR}
+        />
+      </box>
     </box>
   );
 }

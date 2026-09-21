@@ -100,3 +100,123 @@
     @apply font-sans;
   }
 }
+
+/* Assistant markdown (TanStack Markdown) inside chat bubbles */
+.chat-markdown {
+  overflow-wrap: anywhere;
+}
+
+.chat-markdown > :first-child {
+  margin-top: 0;
+}
+
+.chat-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.chat-markdown p {
+  margin: 0.5em 0;
+}
+
+.chat-markdown h1,
+.chat-markdown h2,
+.chat-markdown h3,
+.chat-markdown h4,
+.chat-markdown h5,
+.chat-markdown h6 {
+  margin: 0.75em 0 0.35em;
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--foreground);
+}
+
+.chat-markdown h1 {
+  font-size: 1.25em;
+}
+
+.chat-markdown h2 {
+  font-size: 1.15em;
+}
+
+.chat-markdown h3 {
+  font-size: 1.05em;
+}
+
+.chat-markdown ul,
+.chat-markdown ol {
+  margin: 0.5em 0;
+  padding-left: 1.25em;
+}
+
+.chat-markdown li {
+  margin: 0.2em 0;
+}
+
+.chat-markdown li > ul,
+.chat-markdown li > ol {
+  margin: 0.15em 0;
+}
+
+.chat-markdown blockquote {
+  margin: 0.5em 0;
+  border-left: 3px solid var(--border);
+  padding-left: 0.75em;
+  color: var(--muted-foreground);
+}
+
+.chat-markdown hr {
+  margin: 0.75em 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+
+.chat-markdown a {
+  word-break: break-word;
+}
+
+.chat-markdown code:not(pre code) {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.875em;
+  padding: 0.1em 0.35em;
+  border-radius: 0.3em;
+  background: color-mix(in srgb, var(--background) 65%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+}
+
+.chat-markdown pre.tm-code {
+  margin: 0.65em 0;
+  padding: 0.65em 0.75em;
+  overflow-x: auto;
+  border-radius: 0.65em;
+  border: 1px solid var(--border);
+  font-size: 0.8em;
+  line-height: 1.45;
+}
+
+.chat-markdown table {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  margin: 0.65em 0;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-size: 0.9em;
+}
+
+.chat-markdown th,
+.chat-markdown td {
+  border: 1px solid var(--border);
+  padding: 0.35em 0.55em;
+  text-align: left;
+}
+
+.chat-markdown th {
+  background: color-mix(in srgb, var(--muted) 80%, transparent);
+  font-weight: 600;
+}
+
+.chat-markdown img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 0.5em;
+}

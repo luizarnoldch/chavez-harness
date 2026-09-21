@@ -33,7 +33,11 @@ async function proxyApi(request: Request, pathSegments: string[] | undefined): P
     headers,
     redirect: "manual",
   };
-  if (request.method !== "GET" && request.method !== "HEAD") {
+  const method = request.method.toUpperCase();
+  if (
+    (method === "POST" || method === "PUT" || method === "PATCH") &&
+    request.body != null
+  ) {
     init.body = request.body;
     // @ts-expect-error duplex required for streaming request bodies in Node fetch
     init.duplex = "half";

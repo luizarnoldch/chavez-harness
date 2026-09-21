@@ -1,5 +1,5 @@
 import { useFetcher, useLoaderData, useNavigation } from "react-router";
-import type { Session } from "../../session/store";
+import type { Session, Turn } from "../../session/store";
 import { useWorkspaceConnection } from "../../workspace/ui/WorkspaceConnection";
 import { MessageList, type PendingTurn } from "./MessageList";
 
@@ -22,21 +22,44 @@ export function ChatPane() {
       ? linkState.generateStream
       : null;
 
+  const turns = session?.turns ?? [];
+
   return (
     <MessageList
-      turns={session?.turns ?? []}
-      pending={pendingTurn(formData)}
+      turns={turns}
+      pending={resolvePendingTurn(formData, turns)}
       streamingDraft={stream?.draftText || null}
+      streamingTools={stream?.draftTools ?? []}
     />
   );
 }
 
-function pendingTurn(formData: FormData | undefined): PendingTurn | null {
+/** Visible while the send action is in flight, unless turns already include that user message. */
+export function resolvePendingTurn(
+  formData: FormData | undefined,
+  turns: Turn[],
+): PendingTurn | null {
   if (!formData) return null;
   const text = String(formData.get("text") ?? "").trim();
   if (!text) return null;
-  return {
-    text,
-    mode: formData.get("mode") === "build" ? "build" : "plan",
-  };
+  const mode = formData.get("mode") === "build" ? "build" : "plan";
+  const clientMessageId = String(formData.get("clientMessageId") ?? "").trim();
+
+  if (clientMessageId) {
+    const matched = turns.some(
+      (t) => t.role === "user" && t.clientMessageId === clientMessageId,
+    );
+    if (matched) return null;
+  }
+
+  const last = turns.at(-1);
+  if (
+    last?.role === "user" &&
+    last.text === text &&
+    last.mode === mode
+  ) {
+    return null;
+  }
+
+  return { text, mode };
 }

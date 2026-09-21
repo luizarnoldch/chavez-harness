@@ -1,4 +1,8 @@
-import type { ChatMessageUsage, ChatMode } from "@chavez-harness/shared";
+import type {
+  ChatMessageDto,
+  ChatMessageUsage,
+  ChatMode,
+} from "@chavez-harness/shared";
 import type { Hub } from "../ws/hub.ts";
 import type { PendingRegistry } from "../ws/pending.ts";
 import { runCursorGenerate } from "./cursor-generate.ts";
@@ -28,6 +32,7 @@ export type ProviderReplyDeps = {
 export type ProviderReplyResult = {
   text: string;
   usage?: ChatMessageUsage | null;
+  parts?: ChatMessageDto["parts"];
 };
 
 /**
@@ -67,6 +72,7 @@ export async function resolveProviderReply(
     return {
       text: outcome.text,
       ...(outcome.usage ? { usage: outcome.usage } : {}),
+      ...(outcome.parts?.length ? { parts: outcome.parts } : {}),
     };
   }
 

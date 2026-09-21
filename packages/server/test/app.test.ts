@@ -34,7 +34,14 @@ describe("OpenAPI docs", () => {
     expect(spec.paths).toHaveProperty("/health");
     expect(spec.paths).toHaveProperty("/api/auth/sign-in/email");
     expect(spec.paths).toHaveProperty("/ws");
+    expect(spec.paths).toHaveProperty("/api/machine");
     expect(spec.paths).toHaveProperty("/api/workspaces/bind");
+    expect(spec.paths).toHaveProperty("/api/workspaces/{workspaceId}/connections");
+    expect(spec.paths).toHaveProperty("/api/workspaces/{workspaceId}/daemon");
+    expect(spec.paths).toHaveProperty("/api/sessions/{sessionId}");
+    expect(spec.paths).toHaveProperty("/api/providers");
+    expect(spec.paths).toHaveProperty("/api/providers/{provider}/credentials");
+    expect(spec.paths).toHaveProperty("/api/provider-jobs/unwrap");
   });
 
   test("GET /docs returns swagger UI when docs enabled", async () => {

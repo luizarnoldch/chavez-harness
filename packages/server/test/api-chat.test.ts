@@ -154,4 +154,39 @@ describe("REST chat API", () => {
     });
     expect(activate.status).toBe(409);
   });
+
+  test("DELETE /api/sessions/:id removes session", async () => {
+    const app = createApp({
+      ws: { resolveUserId: async () => userId },
+    });
+    const headers = {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    };
+
+    const bind = await app.request("/api/workspaces/bind", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ path: `/tmp/del-session-${Date.now()}` }),
+    });
+    const workspace = (await bind.json()) as { id: string };
+
+    const create = await app.request(`/api/workspaces/${workspace.id}/sessions`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ mode: "plan", provider: "local", model: "eco" }),
+    });
+    const session = (await create.json()) as { id: string };
+
+    const del = await app.request(`/api/sessions/${session.id}`, {
+      method: "DELETE",
+      headers,
+    });
+    expect(del.status).toBe(200);
+    const body = (await del.json()) as { chatSessionId: string };
+    expect(body.chatSessionId).toBe(session.id);
+
+    const get = await app.request(`/api/sessions/${session.id}`, { headers });
+    expect(get.status).toBe(404);
+  });
 });

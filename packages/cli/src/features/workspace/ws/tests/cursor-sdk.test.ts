@@ -4,6 +4,7 @@ import { CURSOR_PLAN_TOOLS } from "@chavez-harness/shared";
 import type { Credentials } from "../../../auth/api/credentials.ts";
 import {
   progressFromSdkMessage,
+  progressEventsFromSdkMessage,
   resolveCursorModelId,
   runCursorSdkGenerate,
   textFromRunResult,
@@ -98,6 +99,61 @@ describe("cursor-sdk helpers", () => {
       }),
     ).toEqual({ phase: "streaming", textDelta: "hola" });
   });
+
+  test("progressFromSdkMessage maps tool_call with args", () => {
+    expect(
+      progressFromSdkMessage({
+        type: "tool_call",
+        agent_id: "a",
+        run_id: "r",
+        call_id: "tc-1",
+        name: "read",
+        status: "running",
+        args: { path: "foo.ts" },
+      }),
+    ).toEqual({
+      phase: "tool",
+      toolCall: {
+        id: "tc-1",
+        name: "read",
+        status: "running",
+        args: { path: "foo.ts" },
+      },
+    });
+  });
+
+  test("progressEventsFromSdkMessage extracts tool_use from assistant", () => {
+    expect(
+      progressEventsFromSdkMessage({
+        type: "assistant",
+        agent_id: "a",
+        run_id: "r",
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "tool_use",
+              id: "tu-1",
+              name: "read",
+              input: { path: "bar.ts" },
+            },
+            { type: "text", text: "listo" },
+          ],
+        },
+      }),
+    ).toEqual([
+      {
+        phase: "tool",
+        toolCall: {
+          id: "tu-1",
+          name: "read",
+          status: "running",
+          args: { path: "bar.ts" },
+        },
+      },
+      { phase: "streaming", textDelta: "listo" },
+    ]);
+  });
 });
 
 describe("runCursorSdkGenerate (mocked Agent)", () => {
@@ -164,7 +220,11 @@ describe("runCursorSdkGenerate (mocked Agent)", () => {
         },
         factory,
       );
-      expect(outcome).toEqual({ text: "respuesta 1", agentId: "agent-new" });
+      expect(outcome).toEqual({
+        text: "respuesta 1",
+        agentId: "agent-new",
+        parts: [{ type: "text", text: "respuesta 1" }],
+      });
       expect(create).toHaveBeenCalledTimes(1);
       expect(resume).toHaveBeenCalledTimes(0);
       expect(send).toHaveBeenCalledWith("hola", { model: { id: "auto" } });
@@ -198,7 +258,11 @@ describe("runCursorSdkGenerate (mocked Agent)", () => {
         },
         factory,
       );
-      expect(outcome).toEqual({ text: "respuesta 2", agentId: "agent-prev" });
+      expect(outcome).toEqual({
+        text: "respuesta 2",
+        agentId: "agent-prev",
+        parts: [{ type: "text", text: "respuesta 2" }],
+      });
       expect(resume).toHaveBeenCalledTimes(1);
       expect(resume).toHaveBeenCalledWith("agent-prev", {
         apiKey: "sk-test",
@@ -393,7 +457,11 @@ describe("runCursorSdkGenerate (mocked Agent)", () => {
         },
         factory,
       );
-      expect(outcome).toEqual({ text: "recuperado", agentId: "agent-fresh" });
+      expect(outcome).toEqual({
+        text: "recuperado",
+        agentId: "agent-fresh",
+        parts: [{ type: "text", text: "recuperado" }],
+      });
       expect(resume).toHaveBeenCalledTimes(1);
       expect(resume).toHaveBeenCalledWith("stale-id", {
         apiKey: "sk-test",

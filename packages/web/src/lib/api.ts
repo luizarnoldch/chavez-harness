@@ -22,10 +22,12 @@ async function apiFetch(path: string, init: RequestInit = {}): Promise<Response>
 async function parseError(response: Response, fallback: string): Promise<string> {
   try {
     const body = (await response.json()) as { message?: string; error?: string };
-    return body.message ?? body.error ?? fallback;
+    const detail = body.message ?? body.error;
+    if (detail) return detail;
   } catch {
-    return fallback;
+    // non-JSON body
   }
+  return `${fallback} (${response.status})`;
 }
 
 export async function listWorkspaces(): Promise<WorkspaceDto[]> {
@@ -113,6 +115,34 @@ export async function listSessions(workspaceId: string): Promise<ChatSessionDto[
   }
   const body = (await response.json()) as { sessions: ChatSessionDto[] };
   return body.sessions;
+}
+
+export async function createSession(
+  workspaceId: string,
+  input: {
+    title?: string;
+    mode?: "plan" | "build";
+    provider?: string;
+    model?: string;
+  } = {},
+): Promise<ChatSessionDto> {
+  const response = await apiFetch(`/api/workspaces/${workspaceId}/sessions`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new Error(await parseError(response, "No se pudo crear la sesión"));
+  }
+  return (await response.json()) as ChatSessionDto;
+}
+
+export async function deleteSession(sessionId: string): Promise<void> {
+  const response = await apiFetch(`/api/sessions/${sessionId}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    throw new Error(await parseError(response, "No se pudo eliminar la sesión"));
+  }
 }
 
 export async function getSessionWithMessages(

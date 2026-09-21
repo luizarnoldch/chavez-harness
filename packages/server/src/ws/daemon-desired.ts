@@ -93,3 +93,41 @@ export async function applyDaemonDesired(args: {
     daemonStatus: hub.findDaemon(userId, workspaceId) ? "online" : "offline",
   };
 }
+
+/**
+ * After host.bind: start any workspaces already marked desired=on that lack a primary daemon.
+ * Failures are logged; never throws.
+ */
+export async function reconcileDesiredDaemons(args: {
+  hub: Hub;
+  pending: PendingRegistry;
+  workspaces: WorkspaceService;
+  userId: string;
+}): Promise<void> {
+  const { hub, pending, workspaces, userId } = args;
+  let list: WorkspaceDto[];
+  try {
+    list = await workspaces.listForUser(userId);
+  } catch (err) {
+    console.error("[daemon] reconcile list failed", err);
+    return;
+  }
+
+  for (const ws of list) {
+    if (ws.daemonDesired !== "on") continue;
+    if (hub.findDaemon(userId, ws.id)) continue;
+    try {
+      await applyDaemonDesired({
+        hub,
+        pending,
+        workspaces,
+        userId,
+        workspaceId: ws.id,
+        desired: "on",
+        source: ws.daemonDesiredSource ?? "web",
+      });
+    } catch (err) {
+      console.error(`[daemon] reconcile start failed for ${ws.id}`, err);
+    }
+  }
+}

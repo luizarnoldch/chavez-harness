@@ -289,7 +289,7 @@ describe("workspace.ping rpc", () => {
     });
   });
 
-  test("errors when no daemon", async () => {
+  test("errors when no daemon and no host", async () => {
     const hub = createHub();
     const deps = testDeps(hub);
 
@@ -310,6 +310,45 @@ describe("workspace.ping rpc", () => {
       JSON.stringify({
         type: "workspace.ping",
         id: "ping-2",
+        workspaceId: WS_ID,
+      }),
+      deps,
+    );
+
+    const reply = JSON.parse(clientSent[0]!);
+    expect(reply.ok).toBe(false);
+    expect(reply.error).toContain("Host");
+  });
+
+  test("errors when host online but no daemon", async () => {
+    const hub = createHub();
+    const deps = testDeps(hub);
+
+    baseConn(hub, {
+      connectionId: "host-ping",
+      userId: "user-1",
+      clientKind: "host",
+      machineId: "m-ping",
+      role: "primary",
+    });
+
+    const clientSent: string[] = [];
+    const client = baseConn(hub, {
+      connectionId: "client-ping",
+      clientKind: "client",
+      workspaceId: WS_ID,
+      workspacePath: "/tmp/proj",
+      socket: {
+        send: (data) => clientSent.push(data),
+        close: () => {},
+      },
+    });
+
+    await handleWsMessage(
+      client,
+      JSON.stringify({
+        type: "workspace.ping",
+        id: "ping-host",
         workspaceId: WS_ID,
       }),
       deps,
@@ -532,6 +571,97 @@ describe("host + daemon desired", () => {
     const reply = JSON.parse(sent[sent.length - 1]!);
     expect(reply.ok).toBe(false);
     expect(reply.error).toContain("Host");
+  });
+
+  test("host.bind reconciles daemonDesired=on and dispatches start", async () => {
+    const hub = createHub();
+    const deps = testDeps(hub);
+    const path = `/tmp/reconcile-${Date.now()}`;
+    const userId = "user-reconcile";
+
+    const clientSent: string[] = [];
+    const client = baseConn(hub, {
+      connectionId: "c-reconcile",
+      userId,
+      socket: {
+        send: (data) => clientSent.push(data),
+        close: () => {},
+      },
+    });
+
+    await handleWsMessage(
+      client,
+      JSON.stringify({
+        type: "workspace.bind",
+        id: "br",
+        path,
+        clientKind: "client",
+      }),
+      deps,
+    );
+    const bindReply = clientSent
+      .map((raw) => JSON.parse(raw) as { type: string; data?: { workspaceId: string } })
+      .find((m) => m.type === "workspace.bind");
+    const workspaceId = bindReply!.data!.workspaceId;
+    clientSent.length = 0;
+
+    await handleWsMessage(
+      client,
+      JSON.stringify({
+        type: "workspace.daemon.set",
+        id: "dsr",
+        workspaceId,
+        desired: "on",
+        source: "web",
+      }),
+      deps,
+    );
+    const setReply = JSON.parse(clientSent[clientSent.length - 1]!);
+    expect(setReply.ok).toBe(false);
+    expect(setReply.error).toContain("Host");
+
+    const ws = await deps.workspaces.getForUser(userId, workspaceId);
+    expect(ws?.daemonDesired).toBe("on");
+
+    const hostSent: string[] = [];
+    const host = baseConn(hub, {
+      connectionId: "host-reconcile",
+      userId,
+      socket: {
+        send: (data) => hostSent.push(data),
+        close: () => {},
+      },
+    });
+
+    await handleWsMessage(
+      host,
+      JSON.stringify({
+        type: "host.bind",
+        id: "hbr",
+        machineId: "m-reconcile",
+      }),
+      deps,
+    );
+
+    await Bun.sleep(50);
+    const dispatch = hostSent
+      .map((raw) => JSON.parse(raw) as Record<string, unknown>)
+      .find((m) => m.type === "daemon.start.dispatch");
+    expect(dispatch).toBeTruthy();
+    expect(dispatch!.workspaceId).toBe(workspaceId);
+    expect(dispatch!.path).toBe(path);
+
+    // Complete start so pending wait does not leak
+    await handleWsMessage(
+      host,
+      JSON.stringify({
+        type: "daemon.start.result",
+        requestId: dispatch!.requestId,
+        ok: true,
+        data: { pid: 1, spawned: true },
+      }),
+      deps,
+    );
   });
 
   test("daemon.start.dispatch round-trip via host", async () => {
@@ -774,6 +904,169 @@ describe("host + daemon desired", () => {
     expect(offReply.ok).toBe(true);
     expect(offReply.data.ignored).toBe(true);
     expect(offReply.data.daemonDesired).toBe("on");
+  });
+
+  test("session.delete removes session and pushes session.deleted", async () => {
+    const hub = createHub();
+    const deps = testDeps(hub);
+    const path = `/tmp/sess-del-${Date.now()}`;
+    const sent: string[] = [];
+    const client = baseConn(hub, {
+      connectionId: "c-del",
+      userId: "user-del",
+      socket: {
+        send: (data) => sent.push(data),
+        close: () => {},
+      },
+    });
+
+    await handleWsMessage(
+      client,
+      JSON.stringify({
+        type: "workspace.bind",
+        id: "b",
+        path,
+        clientKind: "client",
+      }),
+      deps,
+    );
+    const workspaceId = sent
+      .map((raw) => JSON.parse(raw) as { type: string; data?: { workspaceId: string } })
+      .find((m) => m.type === "workspace.bind")!.data!.workspaceId;
+
+    sent.length = 0;
+    await handleWsMessage(
+      client,
+      JSON.stringify({
+        type: "session.create",
+        id: "sc",
+        workspaceId,
+      }),
+      deps,
+    );
+    const created = sent
+      .map((raw) => JSON.parse(raw) as { type: string; data?: { id: string } })
+      .find((m) => m.type === "session.create");
+    expect(created?.data?.id).toBeTruthy();
+    const sessionId = created!.data!.id;
+
+    sent.length = 0;
+    await handleWsMessage(
+      client,
+      JSON.stringify({
+        type: "session.delete",
+        id: "sd",
+        chatSessionId: sessionId,
+      }),
+      deps,
+    );
+
+    const deletedPush = sent
+      .map((raw) => JSON.parse(raw) as Record<string, unknown>)
+      .find((m) => m.type === "session.deleted");
+    expect(deletedPush).toBeTruthy();
+    expect((deletedPush!.data as { chatSessionId: string }).chatSessionId).toBe(sessionId);
+
+    const reply = sent
+      .map((raw) => JSON.parse(raw) as { type: string; ok?: boolean })
+      .find((m) => m.type === "session.delete");
+    expect(reply?.ok).toBe(true);
+  });
+
+  test("chat.send does not echo user message.created to sender", async () => {
+    const hub = createHub();
+    const deps = testDeps(hub);
+    const path = `/tmp/chat-echo-${Date.now()}`;
+
+    const senderSent: string[] = [];
+    const peerSent: string[] = [];
+    const sender = baseConn(hub, {
+      connectionId: "c-sender",
+      userId: "user-echo",
+      socket: {
+        send: (data) => senderSent.push(data),
+        close: () => {},
+      },
+    });
+    const peer = baseConn(hub, {
+      connectionId: "c-peer",
+      userId: "user-echo",
+      socket: {
+        send: (data) => peerSent.push(data),
+        close: () => {},
+      },
+    });
+
+    await handleWsMessage(
+      sender,
+      JSON.stringify({
+        type: "workspace.bind",
+        id: "b-s",
+        path,
+        clientKind: "client",
+      }),
+      deps,
+    );
+    await handleWsMessage(
+      peer,
+      JSON.stringify({
+        type: "workspace.bind",
+        id: "b-p",
+        path,
+        clientKind: "client",
+      }),
+      deps,
+    );
+    const workspaceId = senderSent
+      .map((raw) => JSON.parse(raw) as { type: string; data?: { workspaceId: string } })
+      .find((m) => m.type === "workspace.bind")!.data!.workspaceId;
+
+    senderSent.length = 0;
+    peerSent.length = 0;
+    await handleWsMessage(
+      sender,
+      JSON.stringify({
+        type: "session.create",
+        id: "sc",
+        workspaceId,
+      }),
+      deps,
+    );
+    const sessionId = senderSent
+      .map((raw) => JSON.parse(raw) as { type: string; data?: { id: string } })
+      .find((m) => m.type === "session.create")!.data!.id;
+
+    senderSent.length = 0;
+    peerSent.length = 0;
+    await handleWsMessage(
+      sender,
+      JSON.stringify({
+        type: "chat.send",
+        id: "cs",
+        chatSessionId: sessionId,
+        text: "hola",
+        mode: "plan",
+        clientMessageId: "cid-echo-1",
+      }),
+      deps,
+    );
+
+    const parsePushes = (lines: string[]) =>
+      lines
+        .map((raw) => JSON.parse(raw) as { type?: string; data?: { message?: { role?: string } } })
+        .filter((m) => m.type === "session.message.created");
+
+    const senderPushes = parsePushes(senderSent);
+    const peerPushes = parsePushes(peerSent);
+
+    expect(senderPushes.some((p) => p.data?.message?.role === "user")).toBe(false);
+    expect(peerPushes.some((p) => p.data?.message?.role === "user")).toBe(true);
+    expect(peerPushes.some((p) => p.data?.message?.role === "assistant")).toBe(true);
+
+    const reply = senderSent
+      .map((raw) => JSON.parse(raw) as { type: string; ok?: boolean })
+      .find((m) => m.type === "chat.send");
+    expect(reply?.ok).toBe(true);
   });
 });
 

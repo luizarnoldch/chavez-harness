@@ -6,17 +6,24 @@ import type {
 import type { AppMode } from "../../lib/types/mode";
 import { messageToTurnText } from "../workspace/bridge.ts";
 
+export type ToolCallPart = Extract<
+  ChatMessageDto["parts"][number],
+  { type: "tool-call" }
+>;
+
 export type UserTurn = {
   id: string;
   role: "user";
   text: string;
   mode: AppMode;
+  clientMessageId?: string | null;
 };
 
 export type AssistantTurn = {
   id: string;
   role: "assistant";
   text: string;
+  toolCalls: ToolCallPart[];
   model: string;
   provider: string | null;
   status: "done" | "error";
@@ -44,6 +51,12 @@ export function sessionFromDto(dto: ChatSessionWithMessagesDto): Session {
   };
 }
 
+function toolCallsFromParts(parts: ChatMessageDto["parts"]): ToolCallPart[] {
+  return parts.filter(
+    (p): p is ToolCallPart => p.type === "tool-call",
+  );
+}
+
 function messageToTurn(message: ChatMessageDto): Turn | null {
   if (message.role === "user") {
     return {
@@ -51,6 +64,7 @@ function messageToTurn(message: ChatMessageDto): Turn | null {
       role: "user",
       text: messageToTurnText(message),
       mode: (message.mode as AppMode) ?? "plan",
+      clientMessageId: message.clientMessageId,
     };
   }
   if (message.role === "assistant") {
@@ -58,6 +72,7 @@ function messageToTurn(message: ChatMessageDto): Turn | null {
       id: message.id,
       role: "assistant",
       text: messageToTurnText(message),
+      toolCalls: toolCallsFromParts(message.parts),
       model: message.model ?? "auto",
       provider: message.provider,
       status: message.status === "error" ? "error" : "done",

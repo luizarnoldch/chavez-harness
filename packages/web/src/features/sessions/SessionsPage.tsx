@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { ChatSessionDto, WorkspaceDto } from "@chavez-harness/shared";
 import { MessageSquareText, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -34,6 +34,29 @@ function modeClass(mode: ChatSessionDto["mode"]): string {
   return mode === "build" ? "text-build" : "text-plan";
 }
 
+/** Match REST listSessions: lastMessageAt desc, then createdAt desc. */
+function sortSessions(sessions: ChatSessionDto[]): ChatSessionDto[] {
+  return [...sessions].sort((a, b) => {
+    const aMsg = a.lastMessageAt ? Date.parse(a.lastMessageAt) : 0;
+    const bMsg = b.lastMessageAt ? Date.parse(b.lastMessageAt) : 0;
+    if (bMsg !== aMsg) return bMsg - aMsg;
+    return Date.parse(b.createdAt) - Date.parse(a.createdAt);
+  });
+}
+
+function upsertSession(
+  prev: ChatSessionDto[] | null,
+  session: ChatSessionDto,
+): ChatSessionDto[] {
+  const list = prev ?? [];
+  const idx = list.findIndex((s) => s.id === session.id);
+  const next =
+    idx >= 0
+      ? list.map((s, i) => (i === idx ? session : s))
+      : [session, ...list];
+  return sortSessions(next);
+}
+
 type SessionsPageProps = {
   workspaceId: string;
 };
@@ -44,13 +67,30 @@ export function SessionsPage({ workspaceId }: SessionsPageProps) {
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const onSessionUpdated = useCallback((session: ChatSessionDto) => {
+    setSessions((prev) => upsertSession(prev, session));
+  }, []);
+
+  const onSessionDeleted = useCallback(
+    (payload: { workspaceId: string; chatSessionId: string }) => {
+      setSessions((prev) =>
+        prev ? prev.filter((s) => s.id !== payload.chatSessionId) : prev,
+      );
+    },
+    [],
+  );
+
   const {
     presence,
     activate,
     deactivate,
     controlling,
     controlError,
-  } = useWorkspacePresence(workspaceId, workspace?.path ?? null);
+  } = useWorkspacePresence(workspaceId, workspace?.path ?? null, {
+    onSessionUpdated,
+    onSessionDeleted,
+  });
 
   useEffect(() => {
     let cancelled = false;

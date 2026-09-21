@@ -9,6 +9,7 @@ import {
   registerWsOpenApiPath,
 } from "./openapi/auth.paths.ts";
 import { registerChatOpenApiPaths } from "./openapi/chat.paths.ts";
+import { registerProvidersOpenApiPaths } from "./openapi/providers.paths.ts";
 import { createApiRoutes } from "./routes/api.ts";
 import { createProviderRoutes } from "./routes/providers.ts";
 import { authRoutes } from "./routes/auth.ts";
@@ -71,6 +72,7 @@ export function createApp(options: CreateAppOptions = {}) {
 
   registerAuthOpenApiPaths(app);
   registerChatOpenApiPaths(app);
+  registerProvidersOpenApiPaths(app);
   registerWsOpenApiPath(app);
 
   if (enableDocs) {
@@ -80,7 +82,7 @@ export function createApp(options: CreateAppOptions = {}) {
         title: "Chavez Harness API",
         version: "0.0.1",
         description:
-          "HTTP API for Chavez Harness (health, better-auth, workspaces, chat, WebSocket upgrade).",
+          "HTTP API for Chavez Harness: health, better-auth, machine presence, workspaces, daemon control, chat sessions/messages, provider credentials, and WebSocket upgrade.",
       },
       servers: [{ url: config.serverUrl }],
     });

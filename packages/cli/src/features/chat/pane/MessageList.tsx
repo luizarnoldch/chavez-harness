@@ -1,8 +1,14 @@
-import type { ChatMessageUsage } from "@chavez-harness/shared";
+import type { ChatGenerateToolCall, ChatMessageUsage } from "@chavez-harness/shared";
 import { TextAttributes } from "@opentui/core";
 import { useState } from "react";
 import type { Turn } from "../../session/store";
 import type { AppMode } from "../../../lib/types/mode";
+import { chatMarkdownStyle } from "./markdown-style";
+import {
+  ToolCallRow,
+  toolRowFromDraft,
+  toolRowFromPart,
+} from "./ToolCallRow";
 
 export type PendingTurn = {
   text: string;
@@ -14,6 +20,7 @@ type MessageListProps = {
   pending?: PendingTurn | null;
   /** Live assistant draft while generate streams. */
   streamingDraft?: string | null;
+  streamingTools?: ChatGenerateToolCall[];
 };
 
 const ERROR_COLOR = "#f7768e";
@@ -22,10 +29,13 @@ export function MessageList({
   turns,
   pending = null,
   streamingDraft = null,
+  streamingTools = [],
 }: MessageListProps) {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
+  const streaming =
+    Boolean(streamingDraft) || streamingTools.length > 0;
   const empty =
-    turns.length === 0 && pending == null && !streamingDraft;
+    turns.length === 0 && pending == null && !streaming;
 
   function toggleExpanded(id: string) {
     setExpandedIds((prev) => {
@@ -55,17 +65,19 @@ export function MessageList({
                 turn={turn}
                 expanded={expandedIds.has(turn.id)}
                 onToggle={() => toggleExpanded(turn.id)}
+                expandedToolIds={expandedIds}
+                onToggleTool={toggleExpanded}
               />
             ),
           )}
           {pending ? <UserMessage mode={pending.mode} text={pending.text} /> : null}
-          {streamingDraft ? (
-            <box paddingLeft={1} paddingRight={1} marginBottom={1}>
-              <text>
-                {streamingDraft}
-                <span attributes={TextAttributes.DIM}> ▍</span>
-              </text>
-            </box>
+          {streaming ? (
+            <StreamingDraft
+              text={streamingDraft}
+              tools={streamingTools}
+              expandedToolIds={expandedIds}
+              onToggleTool={toggleExpanded}
+            />
           ) : null}
         </>
       )}
@@ -115,20 +127,50 @@ export function compactUsageSummary(
   return parts.join(" · ");
 }
 
+function AssistantMarkdown({
+  content,
+  streaming = false,
+}: {
+  content: string;
+  streaming?: boolean;
+}) {
+  if (!content) return null;
+  return (
+    <markdown
+      content={content}
+      syntaxStyle={chatMarkdownStyle}
+      streaming={streaming}
+      conceal
+    />
+  );
+}
+
 function BotMessage({
   turn,
   expanded,
   onToggle,
+  expandedToolIds,
+  onToggleTool,
 }: {
   turn: Extract<Turn, { role: "assistant" }>;
   expanded: boolean;
   onToggle: () => void;
+  expandedToolIds: Set<string>;
+  onToggleTool: (id: string) => void;
 }) {
   const summary = compactUsageSummary(turn.model, turn.usage);
 
   return (
     <box paddingLeft={1} paddingRight={1} marginBottom={1} flexDirection="column">
-      <text>{turn.text}</text>
+      {turn.toolCalls.map((tc) => (
+        <ToolCallRow
+          key={tc.id}
+          tool={toolRowFromPart(tc)}
+          expanded={expandedToolIds.has(`tool:${tc.id}`)}
+          onToggle={() => onToggleTool(`tool:${tc.id}`)}
+        />
+      ))}
+      <AssistantMarkdown content={turn.text} />
       <box flexDirection="row" onMouseDown={onToggle}>
         <text fg="#7aa2f7">{expanded ? "▾" : "▸"}</text>
         <text attributes={TextAttributes.DIM}> {summary}</text>
@@ -139,6 +181,40 @@ function BotMessage({
           model={turn.model}
           usage={turn.usage}
         />
+      ) : null}
+    </box>
+  );
+}
+
+function StreamingDraft({
+  text,
+  tools,
+  expandedToolIds,
+  onToggleTool,
+}: {
+  text: string | null | undefined;
+  tools: ChatGenerateToolCall[];
+  expandedToolIds: Set<string>;
+  onToggleTool: (id: string) => void;
+}) {
+  const draft = text ?? "";
+  return (
+    <box paddingLeft={1} paddingRight={1} marginBottom={1} flexDirection="column">
+      {tools.map((tool) => (
+        <ToolCallRow
+          key={tool.id}
+          tool={toolRowFromDraft(tool)}
+          expanded={expandedToolIds.has(`draft:${tool.id}`)}
+          onToggle={() => onToggleTool(`draft:${tool.id}`)}
+        />
+      ))}
+      {draft ? (
+        <box flexDirection="column">
+          <AssistantMarkdown content={draft} streaming />
+          <text attributes={TextAttributes.DIM}>▍</text>
+        </box>
+      ) : tools.length > 0 ? (
+        <text attributes={TextAttributes.DIM}>▍</text>
       ) : null}
     </box>
   );

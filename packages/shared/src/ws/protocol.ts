@@ -7,6 +7,8 @@ import {
   chatSessionWithMessagesDtoSchema,
   workspaceDtoSchema,
 } from "../schemas/chat.schema.ts";
+import { messagePartsSchema } from "../schemas/message.schema.ts";
+import { toolCallArgsSchema } from "../schemas/tools.schema.ts";
 
 export const clientKindSchema = z.enum(["daemon", "client", "host"]);
 export type ClientKind = z.infer<typeof clientKindSchema>;
@@ -245,6 +247,21 @@ export const sessionCreateRequestSchema = wsRequestBaseSchema.extend({
 });
 export type SessionCreateRequest = z.infer<typeof sessionCreateRequestSchema>;
 
+export const sessionDeleteRequestSchema = wsRequestBaseSchema.extend({
+  type: z.literal("session.delete"),
+  chatSessionId: z.string().uuid(),
+});
+export type SessionDeleteRequest = z.infer<typeof sessionDeleteRequestSchema>;
+
+export const sessionDeletedPushSchema = wsPushBaseSchema.extend({
+  type: z.literal("session.deleted"),
+  data: z.object({
+    workspaceId: z.string().uuid(),
+    chatSessionId: z.string().uuid(),
+  }),
+});
+export type SessionDeletedPush = z.infer<typeof sessionDeletedPushSchema>;
+
 export const chatSendRequestSchema = wsRequestBaseSchema.extend({
   type: z.literal("chat.send"),
   chatSessionId: z.string().uuid(),
@@ -317,6 +334,8 @@ export const chatGenerateResultSchema = z.object({
       text: z.string(),
       agentId: z.string().min(1),
       usage: chatMessageUsageSchema.optional(),
+      /** Ordered assistant parts (tool-call + text). Optional for older daemons. */
+      parts: messagePartsSchema.optional(),
     })
     .optional(),
   error: z.string().optional(),
@@ -332,6 +351,25 @@ export type ChatGenerateProgressPhase = z.infer<
   typeof chatGenerateProgressPhaseSchema
 >;
 
+export const chatGenerateToolCallStatusSchema = z.enum([
+  "running",
+  "completed",
+  "error",
+]);
+export type ChatGenerateToolCallStatus = z.infer<
+  typeof chatGenerateToolCallStatusSchema
+>;
+
+/** Live tool-call payload on generate progress (mirrors SDK tool_call). */
+export const chatGenerateToolCallSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  status: chatGenerateToolCallStatusSchema,
+  args: toolCallArgsSchema.optional(),
+  result: z.string().optional(),
+});
+export type ChatGenerateToolCall = z.infer<typeof chatGenerateToolCallSchema>;
+
 /** Daemon → server (then rebroadcast to TUI clients). Does not settle pending. */
 export const chatGenerateProgressSchema = z.object({
   type: z.literal("chat.generate.progress"),
@@ -340,6 +378,7 @@ export const chatGenerateProgressSchema = z.object({
   sessionId: z.string().uuid(),
   phase: chatGenerateProgressPhaseSchema,
   textDelta: z.string().optional(),
+  toolCall: chatGenerateToolCallSchema.optional(),
 });
 export type ChatGenerateProgress = z.infer<typeof chatGenerateProgressSchema>;
 
@@ -352,6 +391,7 @@ export const chatGenerateProgressPushSchema = wsPushBaseSchema.extend({
     sessionId: z.string().uuid(),
     phase: chatGenerateProgressPhaseSchema,
     textDelta: z.string().optional(),
+    toolCall: chatGenerateToolCallSchema.optional(),
   }),
 });
 export type ChatGenerateProgressPush = z.infer<
@@ -376,6 +416,7 @@ export const incomingWsMessageSchema = z.discriminatedUnion("type", [
   sessionListRequestSchema,
   sessionOpenRequestSchema,
   sessionCreateRequestSchema,
+  sessionDeleteRequestSchema,
   chatSendRequestSchema,
   chatGenerateResultSchema,
   chatGenerateProgressSchema,

@@ -5,6 +5,7 @@ import { useKeyboard } from "@opentui/react";
 import { useEffect, useRef, useState } from "react";
 import { matchesShortcut } from "../../../lib/registry/match";
 import { getShortcut } from "../../../lib/registry/shortcuts";
+import { useToast } from "../../../lib/providers/Toast";
 import { shortSessionId } from "../../session/store";
 import { useWorkspaceConnection } from "../../workspace/ui/WorkspaceConnection";
 
@@ -13,6 +14,8 @@ const MAX_VISIBLE = 8;
 type SessionsDialogProps = {
   onClose: () => void;
   onSelect: (sessionId: string) => void;
+  /** Called after deleting the currently open session; pass next id or null. */
+  onDeletedCurrent?: (nextSessionId: string | null) => void;
   currentSessionId?: string;
 };
 
@@ -40,11 +43,14 @@ function rowLabel(session: ChatSessionDto): string {
 export function SessionsDialog({
   onClose,
   onSelect,
+  onDeletedCurrent,
   currentSessionId,
 }: SessionsDialogProps) {
   const { bridge } = useWorkspaceConnection();
+  const { show } = useToast();
   const [load, setLoad] = useState<LoadState>({ status: "loading" });
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -77,7 +83,33 @@ export function SessionsDialog({
       return;
     }
 
-    if (load.status !== "ready" || load.sessions.length === 0) return;
+    if (load.status !== "ready" || load.sessions.length === 0 || deleting) return;
+
+    if (matchesShortcut(key, getShortcut("sessions-delete"))) {
+      key.preventDefault();
+      const session = load.sessions[selectedIndex];
+      if (!session) return;
+      setDeleting(true);
+      void (async () => {
+        try {
+          await bridge.deleteSession(session.id);
+          const remaining = load.sessions.filter((s) => s.id !== session.id);
+          setLoad({ status: "ready", sessions: remaining });
+          setSelectedIndex((i) => Math.min(i, Math.max(0, remaining.length - 1)));
+          show("Sesión eliminada", "success");
+          if (session.id === currentSessionId) {
+            const next = remaining[0]?.id ?? null;
+            onDeletedCurrent?.(next);
+            if (!next) onClose();
+          }
+        } catch (err) {
+          show(err instanceof Error ? err.message : "No se pudo eliminar", "error");
+        } finally {
+          setDeleting(false);
+        }
+      })();
+      return;
+    }
 
     if (key.name === "up" || key.name === "k") {
       key.preventDefault();
@@ -114,8 +146,10 @@ export function SessionsDialog({
 
   if (load.sessions.length === 0) {
     return (
-      <box border borderColor="#414868" title="Sesiones" paddingLeft={1} paddingRight={1} height={3}>
-        <text fg="#888888">No hay conversaciones en este workspace</text>
+      <box border borderColor="#414868" title="Sesiones · Ctrl+D borra" paddingLeft={1} paddingRight={1} height={3}>
+        <text fg="#888888">
+          {deleting ? "Eliminando…" : "No hay conversaciones en este workspace"}
+        </text>
       </box>
     );
   }
@@ -129,6 +163,7 @@ export function SessionsDialog({
       safeIndex={safeIndex}
       visibleRows={visibleRows}
       currentSessionId={currentSessionId}
+      deleting={deleting}
     />
   );
 }
@@ -138,6 +173,7 @@ type SessionsListProps = {
   safeIndex: number;
   visibleRows: number;
   currentSessionId?: string;
+  deleting: boolean;
 };
 
 function SessionsList({
@@ -145,6 +181,7 @@ function SessionsList({
   safeIndex,
   visibleRows,
   currentSessionId,
+  deleting,
 }: SessionsListProps) {
   const scrollRef = useRef<ScrollBoxRenderable>(null);
 
@@ -153,7 +190,12 @@ function SessionsList({
   }, [safeIndex]);
 
   return (
-    <box border borderColor="#7aa2f7" title="Sesiones" height={visibleRows + 2}>
+    <box
+      border
+      borderColor="#7aa2f7"
+      title={deleting ? "Sesiones · eliminando…" : "Sesiones · Ctrl+D borra"}
+      height={visibleRows + 2}
+    >
       <scrollbox ref={scrollRef} height={visibleRows} flexGrow={1}>
         {sessions.map((session, index) => {
           const selected = index === safeIndex;

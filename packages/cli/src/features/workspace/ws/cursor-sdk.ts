@@ -1,6 +1,8 @@
 import { Agent, CursorAgentError, type SDKAgent, type SDKMessage, type ToolName } from "@cursor/sdk";
 import {
   cursorToolsForChatMode,
+  type ChatGenerateToolCall,
+  type ChatMessageDto,
   type ChatMessageUsage,
   type ChatMode,
 } from "@chavez-harness/shared";
@@ -8,12 +10,17 @@ import { apiFetch } from "../../auth/api/api.ts";
 import type { Credentials } from "../../auth/api/credentials.ts";
 
 const DEFAULT_CURSOR_MODEL = "auto";
+export const TOOL_PAYLOAD_MAX = 4096;
+
+type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+type JsonRecord = Record<string, JsonValue>;
 
 export type CursorGenerateProgressPhase = "reasoning" | "streaming" | "tool";
 
 export type CursorGenerateProgress = {
   phase: CursorGenerateProgressPhase;
   textDelta?: string;
+  toolCall?: ChatGenerateToolCall;
 };
 
 export type CursorGenerateInput = {
@@ -29,10 +36,13 @@ export type CursorGenerateInput = {
   onProgress?: (progress: CursorGenerateProgress) => void;
 };
 
+export type MessagePart = ChatMessageDto["parts"][number];
+
 export type CursorGenerateResult = {
   text: string;
   agentId: string;
   usage?: ChatMessageUsage;
+  parts?: MessagePart[];
 };
 
 type AgentCreateOptions = {
@@ -70,6 +80,70 @@ export function resolveCursorModelId(model: string): string {
 export function toolsForChatMode(mode: ChatMode | undefined): ToolName[] | undefined {
   const tools = cursorToolsForChatMode(mode);
   return tools ? [...tools] : undefined;
+}
+
+export function truncateUtf8(value: string, max = TOOL_PAYLOAD_MAX): string {
+  if (value.length <= max) return value;
+  return `${value.slice(0, max)}…`;
+}
+
+/** Coerce SDK tool args into a JSON-safe record for the wire protocol. */
+export function normalizeToolArgs(args: unknown): JsonRecord | undefined {
+  if (args == null) return undefined;
+  try {
+    const json = JSON.stringify(args);
+    const parsed = JSON.parse(json) as unknown;
+    if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+      if (json.length <= TOOL_PAYLOAD_MAX) {
+        return parsed as JsonRecord;
+      }
+      return { _truncated: true, preview: truncateUtf8(json) };
+    }
+    return { value: truncateUtf8(json) };
+  } catch {
+    return { value: truncateUtf8(String(args)) };
+  }
+}
+
+export function stringifyToolResult(result: unknown): string | undefined {
+  if (result == null) return undefined;
+  if (typeof result === "string") return truncateUtf8(result);
+  try {
+    return truncateUtf8(JSON.stringify(result));
+  } catch {
+    return truncateUtf8(String(result));
+  }
+}
+
+export function upsertToolCallPart(
+  parts: MessagePart[],
+  tool: ChatGenerateToolCall,
+): MessagePart[] {
+  const next: MessagePart = {
+    type: "tool-call",
+    id: tool.id,
+    name: tool.name,
+    args: tool.args ?? {},
+    ...(tool.result != null ? { result: tool.result } : {}),
+  };
+  const idx = parts.findIndex(
+    (p) => p.type === "tool-call" && p.id === tool.id,
+  );
+  if (idx >= 0) {
+    const copy = parts.slice();
+    copy[idx] = next;
+    return copy;
+  }
+  return [...parts, next];
+}
+
+export function appendTextPart(parts: MessagePart[], text: string): MessagePart[] {
+  if (!text) return parts;
+  const last = parts[parts.length - 1];
+  if (last?.type === "text") {
+    return [...parts.slice(0, -1), { type: "text", text: last.text + text }];
+  }
+  return [...parts, { type: "text", text }];
 }
 
 /** Map SDK run result to assistant text (testable without live Agent). */
@@ -126,25 +200,64 @@ export function usageFromRunResult(
   };
 }
 
-/** Map an SDK stream event into progress for the TUI (testable). */
-export function progressFromSdkMessage(
+/** Map an SDK stream event into one or more progress updates for the TUI. */
+export function progressEventsFromSdkMessage(
   event: SDKMessage,
-): CursorGenerateProgress | null {
+): CursorGenerateProgress[] {
   if (event.type === "thinking") {
-    return { phase: "reasoning" };
+    return [{ phase: "reasoning" }];
   }
   if (event.type === "tool_call") {
-    return { phase: "tool" };
+    const args = normalizeToolArgs(event.args);
+    const result = stringifyToolResult(event.result);
+    return [
+      {
+        phase: "tool",
+        toolCall: {
+          id: event.call_id,
+          name: event.name,
+          status: event.status,
+          ...(args ? { args } : {}),
+          ...(result != null ? { result } : {}),
+        },
+      },
+    ];
   }
   if (event.type === "assistant") {
+    const out: CursorGenerateProgress[] = [];
+    for (const block of event.message.content) {
+      if (block.type === "tool_use") {
+        const args = normalizeToolArgs(block.input);
+        out.push({
+          phase: "tool",
+          toolCall: {
+            id: block.id,
+            name: block.name,
+            status: "running",
+            ...(args ? { args } : {}),
+          },
+        });
+      }
+    }
     const text = event.message.content
       .filter((block): block is { type: "text"; text: string } => block.type === "text")
       .map((block) => block.text)
       .join("");
-    if (!text) return { phase: "streaming" };
-    return { phase: "streaming", textDelta: text };
+    if (text) {
+      out.push({ phase: "streaming", textDelta: text });
+    } else if (out.length === 0) {
+      out.push({ phase: "streaming" });
+    }
+    return out;
   }
-  return null;
+  return [];
+}
+
+/** @deprecated Prefer progressEventsFromSdkMessage when a single event may yield multiple updates. */
+export function progressFromSdkMessage(
+  event: SDKMessage,
+): CursorGenerateProgress | null {
+  return progressEventsFromSdkMessage(event)[0] ?? null;
 }
 
 async function unwrapApiKey(
@@ -241,24 +354,32 @@ export async function runCursorSdkGenerate(
     const run = await agent.send(input.prompt, { model: { id: modelId } });
 
     let streamedText = "";
+    let parts: MessagePart[] = [];
     if (run.supports("stream")) {
       for await (const event of run.stream()) {
-        const progress = progressFromSdkMessage(event);
-        if (!progress) continue;
-        if (progress.textDelta) {
-          let delta = progress.textDelta;
-          if (delta.startsWith(streamedText)) {
-            delta = delta.slice(streamedText.length);
-            streamedText = progress.textDelta;
-          } else {
-            streamedText += delta;
+        const progresses = progressEventsFromSdkMessage(event);
+        for (const progress of progresses) {
+          if (progress.toolCall) {
+            parts = upsertToolCallPart(parts, progress.toolCall);
+            input.onProgress?.(progress);
+            continue;
           }
-          if (delta) {
-            input.onProgress?.({ phase: "streaming", textDelta: delta });
+          if (progress.textDelta) {
+            let delta = progress.textDelta;
+            if (delta.startsWith(streamedText)) {
+              delta = delta.slice(streamedText.length);
+              streamedText = progress.textDelta;
+            } else {
+              streamedText += delta;
+            }
+            if (delta) {
+              parts = appendTextPart(parts, delta);
+              input.onProgress?.({ phase: "streaming", textDelta: delta });
+            }
+            continue;
           }
-          continue;
+          input.onProgress?.(progress);
         }
-        input.onProgress?.(progress);
       }
     }
 
@@ -274,10 +395,22 @@ export async function runCursorSdkGenerate(
       if (!text) throw new Error("Cursor SDK returned empty text");
     }
 
+    // Ensure final text part matches wait() text when stream was partial/empty.
+    const hasTextPart = parts.some((p) => p.type === "text");
+    if (!hasTextPart && text) {
+      parts = appendTextPart(parts, text);
+    } else if (hasTextPart && text && streamedText.trim() !== text) {
+      parts = [
+        ...parts.filter((p) => p.type !== "text"),
+        { type: "text", text },
+      ];
+    }
+
     return {
       text,
       agentId: agent.agentId,
       ...(usage ? { usage } : {}),
+      ...(parts.length > 0 ? { parts } : {}),
     };
   } catch (err) {
     if (err instanceof CursorAgentError) {

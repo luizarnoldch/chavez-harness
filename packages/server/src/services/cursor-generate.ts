@@ -1,7 +1,9 @@
 import {
   CHAT_GENERATE_TIMEOUT_MS,
   NO_DAEMON_ERROR,
+  NO_HOST_ERROR,
   type ChatGenerateResult,
+  type ChatMessageDto,
   type ChatMessageUsage,
   type ChatMode,
 } from "@chavez-harness/shared";
@@ -28,6 +30,7 @@ export type CursorGenerateOutcome = {
   text: string;
   agentId: string;
   usage?: ChatMessageUsage;
+  parts?: ChatMessageDto["parts"];
 };
 
 export async function runCursorGenerate(
@@ -35,6 +38,9 @@ export async function runCursorGenerate(
 ): Promise<CursorGenerateOutcome> {
   const daemon = args.hub.findDaemon(args.userId, args.workspaceId);
   if (!daemon || !daemon.workspacePath) {
+    if (!args.hub.findHost(args.userId)) {
+      throw new Error(NO_HOST_ERROR);
+    }
     throw new Error(NO_DAEMON_ERROR);
   }
 
@@ -70,5 +76,6 @@ export async function runCursorGenerate(
     text: result.data.text,
     agentId: result.data.agentId,
     ...(result.data.usage ? { usage: result.data.usage } : {}),
+    ...(result.data.parts?.length ? { parts: result.data.parts } : {}),
   };
 }

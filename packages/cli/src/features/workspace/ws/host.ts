@@ -20,10 +20,32 @@ async function main() {
   const machineId = machineIdForHost();
   const hostname = osHostname();
 
-  const client = new ChavezWsClient({
+  let client!: ChavezWsClient;
+
+  async function bindHost(reconnect: boolean) {
+    const bind = await client.request<{ machineId: string }>({
+      type: "host.bind",
+      id: crypto.randomUUID(),
+      machineId,
+      hostname,
+    });
+
+    if (!bind.ok) {
+      throw new Error(bind.error ?? "host.bind failed");
+    }
+
+    console.error(
+      `[host] ${reconnect ? "rebound" : "online"} machineId=${machineId} hostname=${hostname}`,
+    );
+  }
+
+  client = new ChavezWsClient({
     apiUrl: credentials.apiUrl,
     token: credentials.sessionToken,
     autoReconnect: true,
+    onOpen: async ({ reconnect }) => {
+      await bindHost(reconnect);
+    },
     onPush: (message) => {
       if (message.type === "daemon.start.dispatch") {
         void handleStart(message);
@@ -81,21 +103,12 @@ async function main() {
     }
   }
 
-  await client.connect();
-
-  const bind = await client.request<{ machineId: string }>({
-    type: "host.bind",
-    id: crypto.randomUUID(),
-    machineId,
-    hostname,
-  });
-
-  if (!bind.ok) {
-    console.error(bind.error ?? "host.bind failed");
+  try {
+    await client.connect();
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : "host.bind failed");
     process.exit(1);
   }
-
-  console.error(`[host] online machineId=${machineId} hostname=${hostname}`);
 
   const shutdown = async () => {
     client.close();

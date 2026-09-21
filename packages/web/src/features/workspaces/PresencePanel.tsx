@@ -35,6 +35,68 @@ function statusLabel(daemon: DaemonStatus | MachineStatus): string {
   return "offline";
 }
 
+function ControlButtons({
+  presence,
+  onActivate,
+  onDeactivate,
+  controlling,
+  compact,
+}: {
+  presence: PresenceState;
+  onActivate?: () => void;
+  onDeactivate?: () => void;
+  controlling?: boolean;
+  compact?: boolean;
+}) {
+  if (!onActivate && !onDeactivate) return null;
+  const machine = presence.machineStatus ?? "offline";
+  const desired = presence.daemonDesired ?? "off";
+  const btn = compact
+    ? "rounded px-2 py-0.5 text-[10px] font-medium"
+    : "rounded-md px-3 py-1.5 text-xs font-medium";
+
+  return (
+    <div className={cn("flex flex-wrap gap-2", compact ? "mt-1.5" : "mt-3")}>
+      {onActivate ? (
+        <button
+          type="button"
+          disabled={controlling || machine === "offline" || presence.daemon === "online"}
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onActivate();
+          }}
+          className={cn(
+            btn,
+            "bg-primary text-primary-foreground disabled:opacity-50",
+          )}
+        >
+          Activar
+        </button>
+      ) : null}
+      {onDeactivate ? (
+        <button
+          type="button"
+          disabled={
+            controlling || (presence.daemon === "offline" && desired === "off")
+          }
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onDeactivate();
+          }}
+          className={cn(
+            btn,
+            "border border-border disabled:opacity-50",
+          )}
+        >
+          Desactivar
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 export function PresencePanel({
   presence,
   compact,
@@ -59,17 +121,31 @@ export function PresencePanel({
 
   if (compact) {
     return (
-      <p className={cn("text-xs", className)}>
-        <span className={statusClass(machine)}>PC {statusLabel(machine)}</span>
-        <span className="text-muted-foreground"> · </span>
-        <span className={statusClass(presence.daemon)}>
-          Daemon {statusLabel(presence.daemon)}
-        </span>
-        <span className="text-muted-foreground"> · </span>
-        <span className="text-muted-foreground">
-          {clients.length} cliente{clients.length === 1 ? "" : "s"}
-        </span>
-      </p>
+      <div className={cn(className)}>
+        <p className="text-xs">
+          <span className={statusClass(machine)}>PC {statusLabel(machine)}</span>
+          <span className="text-muted-foreground"> · </span>
+          <span className={statusClass(presence.daemon)}>
+            Daemon {statusLabel(presence.daemon)}
+          </span>
+          <span className="text-muted-foreground"> · </span>
+          <span className="text-muted-foreground">
+            {clients.length} cliente{clients.length === 1 ? "" : "s"}
+          </span>
+        </p>
+        <ControlButtons
+          presence={presence}
+          onActivate={onActivate}
+          onDeactivate={onDeactivate}
+          controlling={controlling}
+          compact
+        />
+        {controlError ? (
+          <p className="text-destructive mt-1 text-[10px]" role="alert">
+            {controlError}
+          </p>
+        ) : null}
+      </div>
     );
   }
 
@@ -102,30 +178,12 @@ export function PresencePanel({
         </li>
       </ul>
 
-      {onActivate || onDeactivate ? (
-        <div className="mt-3 flex flex-wrap gap-2">
-          {onActivate ? (
-            <button
-              type="button"
-              disabled={controlling || machine === "offline" || presence.daemon === "online"}
-              onClick={onActivate}
-              className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
-            >
-              Activar daemon
-            </button>
-          ) : null}
-          {onDeactivate ? (
-            <button
-              type="button"
-              disabled={controlling || presence.daemon === "offline" && desired === "off"}
-              onClick={onDeactivate}
-              className="rounded-md border border-border px-3 py-1.5 text-xs font-medium disabled:opacity-50"
-            >
-              Desactivar daemon
-            </button>
-          ) : null}
-        </div>
-      ) : null}
+      <ControlButtons
+        presence={presence}
+        onActivate={onActivate}
+        onDeactivate={onDeactivate}
+        controlling={controlling}
+      />
 
       {controlError ? (
         <p className="text-destructive mt-2 text-xs" role="alert">

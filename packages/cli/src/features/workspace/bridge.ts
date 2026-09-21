@@ -1,5 +1,6 @@
 import type {
   ChatGenerateProgressPhase,
+  ChatGenerateToolCall,
   ChatMessageDto,
   ChatSessionDto,
   ChatSessionWithMessagesDto,
@@ -14,6 +15,7 @@ export type GenerateStreamState = {
   sessionId: string;
   phase: ChatGenerateProgressPhase;
   draftText: string;
+  draftTools: ChatGenerateToolCall[];
 };
 
 export type WorkspaceBridgeState = {
@@ -35,12 +37,26 @@ function textFromParts(parts: ChatMessageDto["parts"]): string {
     .join("");
 }
 
+export function upsertDraftTool(
+  tools: ChatGenerateToolCall[],
+  tool: ChatGenerateToolCall,
+): ChatGenerateToolCall[] {
+  const idx = tools.findIndex((t) => t.id === tool.id);
+  if (idx >= 0) {
+    const next = tools.slice();
+    next[idx] = { ...next[idx], ...tool };
+    return next;
+  }
+  return [...tools, tool];
+}
+
 export class WorkspaceBridge {
   private client: ChavezWsClient | null = null;
   private listeners = new Set<Listener>();
   private messageListeners = new Set<(sessionId: string) => void>();
   private sessions = new Map<string, ChatSessionWithMessagesDto>();
   private closing = false;
+  private daemonRetryInFlight = false;
   private state: WorkspaceBridgeState = {
     status: "disconnected",
     path: process.cwd(),
@@ -89,6 +105,7 @@ export class WorkspaceBridge {
 
   async connect(apiUrl: string, token: string, path = process.cwd()): Promise<void> {
     this.closing = false;
+    this.daemonRetryInFlight = false;
     this.setState({ path, status: "disconnected", error: null, machineOnline: false });
 
     this.client?.close();
@@ -126,29 +143,17 @@ export class WorkspaceBridge {
       status: "connected",
     });
 
-    let daemonSetOk = false;
-    let lastDaemonError: string | undefined;
-    for (let attempt = 0; attempt < 5; attempt++) {
-      if (attempt > 0) await Bun.sleep(300 * attempt);
-      const daemonSet = await this.client.request<{
-        daemonStatus?: "online" | "offline" | "stale";
-      }>({
-        type: "workspace.daemon.set",
-        id: crypto.randomUUID(),
-        workspaceId: bind.data.workspaceId,
-        desired: "on",
-        source: "tui",
+    const hostOnline = await this.waitForHostOnline(12_000);
+    if (!hostOnline) {
+      this.setState({
+        error: this.state.error ?? "PC offline: el Host no está conectado",
       });
-      if (daemonSet.ok) {
-        daemonSetOk = true;
-        break;
-      }
-      lastDaemonError = daemonSet.error;
     }
 
+    const daemonSetOk = await this.requestDaemonOn(bind.data.workspaceId);
     if (!daemonSetOk) {
       this.setState({
-        error: lastDaemonError ?? "No se pudo activar el daemon",
+        error: this.state.error ?? "No se pudo activar el daemon",
       });
     }
 
@@ -170,7 +175,82 @@ export class WorkspaceBridge {
     this.setState({
       machineOnline,
       status: machineOnline && daemonOnline ? "synced" : "connected",
+      ...(daemonOnline ? { error: null } : {}),
     });
+  }
+
+  private async waitForHostOnline(timeoutMs: number): Promise<boolean> {
+    if (this.state.machineOnline) return true;
+    const deadline = Date.now() + timeoutMs;
+    while (!this.closing && Date.now() < deadline) {
+      if (this.state.machineOnline) return true;
+      const workspaceId = this.state.workspaceId;
+      if (this.client && workspaceId) {
+        try {
+          const sync = await this.client.request<{
+            machineStatus?: "online" | "offline";
+          }>({
+            type: "workspace.sync",
+            id: crypto.randomUUID(),
+            workspaceId,
+          });
+          if (sync.data?.machineStatus === "online") {
+            this.setState({ machineOnline: true });
+            return true;
+          }
+        } catch {
+          // keep polling
+        }
+      }
+      await Bun.sleep(400);
+    }
+    return this.state.machineOnline;
+  }
+
+  private async requestDaemonOn(workspaceId: string): Promise<boolean> {
+    if (!this.client) return false;
+    let lastDaemonError: string | undefined;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      if (this.closing) return false;
+      if (attempt > 0) await Bun.sleep(300 * attempt);
+      const daemonSet = await this.client.request<{
+        daemonStatus?: "online" | "offline" | "stale";
+      }>({
+        type: "workspace.daemon.set",
+        id: crypto.randomUUID(),
+        workspaceId,
+        desired: "on",
+        source: "tui",
+      });
+      if (daemonSet.ok) {
+        if (daemonSet.data?.daemonStatus === "online") {
+          this.setState({ status: "synced", error: null });
+        }
+        return true;
+      }
+      lastDaemonError = daemonSet.error;
+    }
+    if (lastDaemonError) {
+      this.setState({ error: lastDaemonError });
+    }
+    return false;
+  }
+
+  private async retryDaemonSetOnHostOnline() {
+    if (this.daemonRetryInFlight || this.closing) return;
+    if (this.state.status === "synced") return;
+    const workspaceId = this.state.workspaceId;
+    if (!workspaceId || !this.client) return;
+
+    this.daemonRetryInFlight = true;
+    try {
+      const ok = await this.requestDaemonOn(workspaceId);
+      if (ok) {
+        this.setState({ error: null });
+      }
+    } finally {
+      this.daemonRetryInFlight = false;
+    }
   }
 
   private handlePush(message: Record<string, unknown>) {
@@ -188,6 +268,9 @@ export class WorkspaceBridge {
                 : this.state.status
               : "disconnected",
       });
+      if (machineOnline && this.state.workspaceId && this.state.status !== "synced") {
+        void this.retryDaemonSetOnHostOnline();
+      }
       return;
     }
 
@@ -246,6 +329,7 @@ export class WorkspaceBridge {
             sessionId?: string;
             phase?: ChatGenerateProgressPhase;
             textDelta?: string;
+            toolCall?: ChatGenerateToolCall;
           }
         | undefined;
       if (!data?.sessionId || !data.phase) return;
@@ -257,11 +341,16 @@ export class WorkspaceBridge {
         data.phase === "streaming" && data.textDelta
           ? `${prev?.draftText ?? ""}${data.textDelta}`
           : (prev?.draftText ?? "");
+      let draftTools = prev?.draftTools ?? [];
+      if (data.toolCall) {
+        draftTools = upsertDraftTool(draftTools, data.toolCall);
+      }
       this.setState({
         generateStream: {
           sessionId: data.sessionId,
           phase: data.phase,
           draftText,
+          draftTools,
         },
       });
     }
@@ -336,6 +425,27 @@ export class WorkspaceBridge {
       throw new Error(reply.error ?? "No se pudieron listar las sesiones");
     }
     return reply.data.sessions;
+  }
+
+  async deleteSession(chatSessionId: string): Promise<void> {
+    if (!this.client || !this.state.workspaceId) {
+      throw new Error("Workspace no conectado");
+    }
+    const reply = await this.client.request<{
+      workspaceId: string;
+      chatSessionId: string;
+    }>({
+      type: "session.delete",
+      id: crypto.randomUUID(),
+      chatSessionId,
+    });
+    if (!reply.ok) {
+      throw new Error(reply.error ?? "No se pudo eliminar la sesión");
+    }
+    this.sessions.delete(chatSessionId);
+    if (this.state.chatSessionId === chatSessionId) {
+      this.setState({ chatSessionId: null });
+    }
   }
 
   async openSession(

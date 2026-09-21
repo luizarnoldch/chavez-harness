@@ -20,7 +20,9 @@ describe("SessionFooter stream phase", () => {
       await act(async () => {
         await setup.renderOnce();
       });
-      expect(setup.captureCharFrame()).toContain("razonando");
+      const frame = setup.captureCharFrame();
+      expect(frame).toContain("razonando");
+      expect(frame).toContain("solo lectura");
     } finally {
       setup.renderer.destroy();
     }
@@ -43,6 +45,24 @@ describe("SessionFooter stream phase", () => {
         await setup.renderOnce();
       });
       expect(setup.captureCharFrame()).toContain("escribiendo");
+    } finally {
+      setup.renderer.destroy();
+    }
+  });
+
+  test("muestra hint completo en modo build", async () => {
+    const setup = await testRender(
+      <SessionFooter busy={false} model="auto" provider="cursor" mode="build" />,
+      { width: 80, height: 4 },
+    );
+
+    try {
+      await act(async () => {
+        await setup.renderOnce();
+      });
+      const frame = setup.captureCharFrame();
+      expect(frame).toContain("completo");
+      expect(frame).not.toContain("solo lectura");
     } finally {
       setup.renderer.destroy();
     }

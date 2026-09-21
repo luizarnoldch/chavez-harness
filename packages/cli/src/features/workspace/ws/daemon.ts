@@ -23,11 +23,51 @@ async function main() {
   let workspaceId: string | null = null;
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   let generating = false;
+  let client!: ChavezWsClient;
 
-  const client = new ChavezWsClient({
+  async function bindDaemon(reconnect: boolean) {
+    const bind = await client.request<{
+      workspaceId: string;
+      role?: string;
+    }>({
+      type: "workspace.bind",
+      id: crypto.randomUUID(),
+      path: workspacePath,
+      clientKind: "daemon",
+      daemonId,
+    });
+
+    if (!bind.ok || !bind.data?.workspaceId) {
+      throw new Error(bind.error ?? "workspace.bind failed");
+    }
+
+    workspaceId = bind.data.workspaceId;
+    console.error(
+      `[daemon] ${reconnect ? "rebound" : "bound"} ${workspacePath} as ${bind.data.role ?? "daemon"} (${workspaceId})`,
+    );
+
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
+    heartbeatTimer = setInterval(() => {
+      if (!workspaceId) return;
+      void client
+        .request({
+          type: "daemon.heartbeat",
+          id: crypto.randomUUID(),
+          workspaceId,
+        })
+        .catch((err) => {
+          console.error("[daemon] heartbeat failed", err);
+        });
+    }, HEARTBEAT_MS);
+  }
+
+  client = new ChavezWsClient({
     apiUrl: credentials.apiUrl,
     token: credentials.sessionToken,
     autoReconnect: true,
+    onOpen: async ({ reconnect }) => {
+      await bindDaemon(reconnect);
+    },
     onPush: (message) => {
       if (message.type === "workspace.ping.dispatch") {
         const requestId = message.requestId;
@@ -101,6 +141,9 @@ async function main() {
             ...(progress.textDelta != null
               ? { textDelta: progress.textDelta }
               : {}),
+            ...(progress.toolCall != null
+              ? { toolCall: progress.toolCall }
+              : {}),
           });
         },
       });
@@ -112,6 +155,7 @@ async function main() {
           text: outcome.text,
           agentId: outcome.agentId,
           ...(outcome.usage ? { usage: outcome.usage } : {}),
+          ...(outcome.parts?.length ? { parts: outcome.parts } : {}),
         },
       });
     } catch (err) {
@@ -128,44 +172,7 @@ async function main() {
     }
   }
 
-  async function bindAndStart() {
-    await client.connect();
-    const bind = await client.request<{
-      workspaceId: string;
-      role?: string;
-    }>({
-      type: "workspace.bind",
-      id: crypto.randomUUID(),
-      path: workspacePath,
-      clientKind: "daemon",
-      daemonId,
-    });
-
-    if (!bind.ok || !bind.data?.workspaceId) {
-      throw new Error(bind.error ?? "workspace.bind failed");
-    }
-
-    workspaceId = bind.data.workspaceId;
-    console.error(
-      `[daemon] bound ${workspacePath} as ${bind.data.role ?? "daemon"} (${workspaceId})`,
-    );
-
-    if (heartbeatTimer) clearInterval(heartbeatTimer);
-    heartbeatTimer = setInterval(() => {
-      if (!workspaceId) return;
-      void client
-        .request({
-          type: "daemon.heartbeat",
-          id: crypto.randomUUID(),
-          workspaceId,
-        })
-        .catch((err) => {
-          console.error("[daemon] heartbeat failed", err);
-        });
-    }, HEARTBEAT_MS);
-  }
-
-  await bindAndStart();
+  await client.connect();
 
   const shutdown = () => {
     if (heartbeatTimer) clearInterval(heartbeatTimer);

@@ -193,6 +193,12 @@ export type SendMessageInput = {
   provider?: string;
   model?: string;
   clientMessageId?: string;
+  /** Fired after the user message is persisted, before generateReply. */
+  onUserMessagePersisted?: (args: {
+    session: ChatSessionDto;
+    userMessage: ChatMessageDto;
+    workspaceId: string;
+  }) => void | Promise<void>;
   /** Used for non-local providers (e.g. Cursor via daemon). */
   generateReply?: (ctx: {
     provider: string;
@@ -201,7 +207,11 @@ export type SendMessageInput = {
     workspaceId: string;
     workspacePath: string;
     cursorAgentId: string | null;
-  }) => Promise<{ text: string; usage?: ChatMessageUsage | null }>;
+  }) => Promise<{
+    text: string;
+    usage?: ChatMessageUsage | null;
+    parts?: ChatMessageDto["parts"];
+  }>;
 };
 
 export type SendMessageResult = {
@@ -390,10 +400,21 @@ export function createChatService(db: Db) {
         throw new Error("Failed to insert user message");
       }
 
+      const mappedSession = mapSession(session);
+      const mappedUser = mapMessage(userRow);
+      if (input.onUserMessagePersisted) {
+        await input.onUserMessagePersisted({
+          session: mappedSession,
+          userMessage: mappedUser,
+          workspaceId: ws.id,
+        });
+      }
+
       let assistantStatus: "done" | "error" = "done";
       let assistantText = "";
       let assistantError: string | null = null;
       let assistantUsage: ChatMessageUsage | null = null;
+      let assistantParts: ChatMessageDto["parts"] = [];
       try {
         if (provider === "local" || !input.generateReply) {
           if (provider !== "local" && !input.generateReply) {
@@ -402,6 +423,9 @@ export function createChatService(db: Db) {
             );
           }
           assistantText = resolveMockReply(input.text);
+          assistantParts = assistantText
+            ? [{ type: "text", text: assistantText }]
+            : [];
         } else {
           const reply = await input.generateReply({
             provider,
@@ -413,6 +437,12 @@ export function createChatService(db: Db) {
           });
           assistantText = reply.text;
           assistantUsage = reply.usage ?? null;
+          assistantParts =
+            reply.parts && reply.parts.length > 0
+              ? reply.parts
+              : assistantText
+                ? [{ type: "text", text: assistantText }]
+                : [];
         }
       } catch (err) {
         assistantStatus = "error";
@@ -430,7 +460,7 @@ export function createChatService(db: Db) {
           model,
           status: assistantStatus,
           error: assistantError,
-          parts: assistantText ? [{ type: "text", text: assistantText }] : [],
+          parts: assistantParts,
           usage: assistantUsage,
           seq: assistantSeq,
         })
@@ -462,6 +492,16 @@ export function createChatService(db: Db) {
         assistantMessage: mapMessage(assistantRow),
         created: true,
       };
+    },
+
+    async deleteSession(userId: string, sessionId: string): Promise<{
+      workspaceId: string;
+      sessionId: string;
+    }> {
+      const { session, workspace: ws } = await assertSessionOwned(userId, sessionId);
+      await db.delete(chatSession).where(eq(chatSession.id, sessionId));
+      await workspaces.touch(ws.id);
+      return { workspaceId: session.workspaceId, sessionId };
     },
 
     async setCursorAgentId(sessionId: string, agentId: string): Promise<void> {

@@ -182,6 +182,14 @@ export function createMemoryChatService(workspaces: WorkspaceService): ChatServi
         createdAt: now,
       };
 
+      if (input.onUserMessagePersisted) {
+        await input.onUserMessagePersisted({
+          session,
+          userMessage,
+          workspaceId: session.workspaceId,
+        });
+      }
+
       let status: "done" | "error" = "done";
       let text = input.text;
       let error: string | null = null;
@@ -220,6 +228,15 @@ export function createMemoryChatService(workspaces: WorkspaceService): ChatServi
       };
       sessions.set(session.id, updated);
       return { session: updated, userMessage, assistantMessage, created: true };
+    },
+    async deleteSession(userId, sessionId) {
+      const session = sessions.get(sessionId);
+      if (!session) throw new ChatNotFoundError("Sesión no encontrada");
+      const ws = await workspaces.getForUser(userId, session.workspaceId);
+      if (!ws) throw new ChatNotFoundError("Sesión no encontrada");
+      sessions.delete(sessionId);
+      messages.delete(sessionId);
+      return { workspaceId: session.workspaceId, sessionId };
     },
     async setCursorAgentId(_sessionId: string, _agentId: string): Promise<void> {
       // Memory mock does not track Cursor agent ids.

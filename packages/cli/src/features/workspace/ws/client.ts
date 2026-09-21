@@ -3,10 +3,14 @@ import { createBackoff } from "./reconnect.ts";
 
 export type PushHandler = (message: Record<string, unknown>) => void;
 
+export type OpenHandler = (info: { reconnect: boolean }) => void | Promise<void>;
+
 export type ChavezWsClientOptions = {
   apiUrl: string;
   token: string;
   onPush?: PushHandler;
+  /** Called after every successful socket open (first connect and reconnects). */
+  onOpen?: OpenHandler;
   autoReconnect?: boolean;
 };
 
@@ -30,6 +34,7 @@ export class ChavezWsClient {
   private readonly backoff = createBackoff();
   private closedByUser = false;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private everOpened = false;
 
   constructor(private readonly options: ChavezWsClientOptions) {}
 
@@ -51,7 +56,19 @@ export class ChavezWsClient {
       const onOpen = () => {
         this.backoff.reset();
         cleanup();
-        resolve();
+        const reconnect = this.everOpened;
+        this.everOpened = true;
+        void Promise.resolve()
+          .then(() => this.options.onOpen?.({ reconnect }))
+          .then(() => resolve())
+          .catch((err) => {
+            if (!reconnect) {
+              reject(err instanceof Error ? err : new Error(String(err)));
+              return;
+            }
+            console.error("[ws] onOpen reconnect failed", err);
+            resolve();
+          });
       };
       const onError = () => {
         cleanup();

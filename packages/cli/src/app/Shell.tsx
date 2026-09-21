@@ -146,6 +146,7 @@ export function Shell() {
     body.set("mode", mode);
     body.set("model", draftModel);
     body.set("provider", draftProvider);
+    body.set("clientMessageId", crypto.randomUUID());
     if (sessionId) {
       void fetcher.submit(body, { method: "post", action: `/session/${sessionId}` });
       return;
@@ -199,6 +200,24 @@ export function Shell() {
             onSelect={(id) => {
               dialog.close();
               navigate(`/session/${id}`);
+            }}
+            onDeletedCurrent={(nextId) => {
+              dialog.close();
+              if (nextId) {
+                navigate(`/session/${nextId}`);
+              } else {
+                void (async () => {
+                  try {
+                    const created = await bridge.createSession();
+                    navigate(`/session/${created.id}`);
+                  } catch (err) {
+                    show(
+                      err instanceof Error ? err.message : "No se pudo crear otra sesión",
+                      "error",
+                    );
+                  }
+                })();
+              }
             }}
           />
         ) : null}

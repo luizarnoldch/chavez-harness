@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import type { WorkspaceConnection } from "@chavez-harness/shared";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { ChatSessionDto, WorkspaceConnection } from "@chavez-harness/shared";
 import {
   getMachineStatus,
   getWorkspaceConnections,
@@ -18,12 +18,22 @@ function toPresence(
   return { daemon, connections, ...extras };
 }
 
+export type WorkspacePresenceSessionHandlers = {
+  onSessionUpdated?: (session: ChatSessionDto) => void;
+  onSessionDeleted?: (payload: {
+    workspaceId: string;
+    chatSessionId: string;
+  }) => void;
+};
+
 /**
  * Snapshot REST + live WS (bind + connection.status / daemon.presence / machine.presence).
+ * Optional session handlers receive workspace-scoped session.updated / session.deleted pushes.
  */
 export function useWorkspacePresence(
   workspaceId: string | null,
   path: string | null,
+  sessionHandlers?: WorkspacePresenceSessionHandlers,
 ): {
   presence: PresenceState | null;
   live: "connecting" | "live" | "offline";
@@ -38,6 +48,9 @@ export function useWorkspacePresence(
   const [machineStatus, setMachineStatus] = useState<MachineStatus>("offline");
   const [controlling, setControlling] = useState(false);
   const [controlError, setControlError] = useState<string | null>(null);
+
+  const sessionHandlersRef = useRef(sessionHandlers);
+  sessionHandlersRef.current = sessionHandlers;
 
   useEffect(() => {
     if (!workspaceId) return;
@@ -108,6 +121,22 @@ export function useWorkspacePresence(
               machineStatus: prev?.machineStatus ?? machineStatus,
             }),
           );
+        }
+        if (msg.type === "session.updated") {
+          const session = msg.data as ChatSessionDto;
+          if (session.workspaceId !== workspaceId) return;
+          sessionHandlersRef.current?.onSessionUpdated?.(session);
+        }
+        if (msg.type === "session.deleted") {
+          const data = msg.data as {
+            workspaceId?: string;
+            chatSessionId?: string;
+          };
+          if (data.workspaceId !== workspaceId || !data.chatSessionId) return;
+          sessionHandlersRef.current?.onSessionDeleted?.({
+            workspaceId: data.workspaceId,
+            chatSessionId: data.chatSessionId,
+          });
         }
       },
     });

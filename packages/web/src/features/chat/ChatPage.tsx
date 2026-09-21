@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { PresencePanel } from "@/features/workspaces/PresencePanel";
 import { useWorkspacePresence } from "@/features/workspaces/useWorkspacePresence";
+import { ChatMarkdown, ChatMarkdownStyles } from "@/features/chat/markdown/ChatMarkdown";
 
 function textFromParts(parts: ChatMessageDto["parts"]): string {
   return parts
@@ -305,6 +306,7 @@ export function ChatPage({ sessionId }: ChatPageProps) {
         ) : null}
 
         <div className="min-h-0 flex-1 overflow-y-auto rounded-xl border border-border/80 bg-card/40 px-3 py-3">
+          <ChatMarkdownStyles />
           {messages.length === 0 && !streamDraft ? (
             <p className="text-muted-foreground py-8 text-center text-sm">
               Sin mensajes todavía. Escribe abajo o usa el TUI.
@@ -320,9 +322,9 @@ export function ChatPage({ sessionId }: ChatPageProps) {
                     className={`flex ${isUser ? "justify-end" : "justify-start"}`}
                   >
                     <div
-                      className={`max-w-[92%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed whitespace-pre-wrap ${
+                      className={`max-w-[92%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed ${
                         isUser
-                          ? "bg-primary text-primary-foreground"
+                          ? "bg-primary text-primary-foreground whitespace-pre-wrap"
                           : "bg-secondary text-secondary-foreground"
                       }`}
                     >
@@ -332,7 +334,13 @@ export function ChatPage({ sessionId }: ChatPageProps) {
                           {msg.mode ? ` · ${msg.mode}` : ""}
                         </p>
                       ) : null}
-                      {body || (
+                      {body ? (
+                        isUser ? (
+                          body
+                        ) : (
+                          <ChatMarkdown source={body} />
+                        )
+                      ) : (
                         <span className="opacity-60">
                           {msg.status === "pending" ? "…" : "(sin texto)"}
                         </span>
@@ -346,11 +354,11 @@ export function ChatPage({ sessionId }: ChatPageProps) {
               })}
               {streamDraft ? (
                 <li className="flex justify-start">
-                  <div className="bg-secondary text-secondary-foreground max-w-[92%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed whitespace-pre-wrap">
+                  <div className="bg-secondary text-secondary-foreground max-w-[92%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed">
                     <p className="mb-1 text-[10px] font-medium tracking-wide uppercase opacity-70">
                       Asistente
                     </p>
-                    {streamDraft}
+                    <ChatMarkdown source={streamDraft} />
                     <span className="ml-0.5 inline-block animate-pulse">▍</span>
                   </div>
                 </li>

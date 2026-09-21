@@ -4,6 +4,24 @@ import { act } from "react";
 import { MessageList, MessageUsagePanel, compactUsageSummary } from "../pane/MessageList";
 import type { Turn } from "../../session/store";
 
+/** Wait until tree-sitter highlight conceals markdown markers. */
+async function paint(setup: Awaited<ReturnType<typeof testRender>>) {
+  await act(async () => {
+    await setup.renderOnce();
+  });
+  for (let i = 0; i < 30; i++) {
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    await act(async () => {
+      await setup.flush({ maxPasses: 10 });
+    });
+    await act(async () => {
+      await setup.renderOnce();
+    });
+  }
+}
+
 describe("compactUsageSummary", () => {
   test("incluye modelo, tokens y duración", () => {
     expect(
@@ -72,6 +90,7 @@ describe("MessageList metadata", () => {
         id: "a1",
         role: "assistant",
         text: "respuesta",
+        toolCalls: [],
         model: "auto",
         provider: "cursor",
         status: "done",
@@ -92,9 +111,7 @@ describe("MessageList metadata", () => {
     });
 
     try {
-      await act(async () => {
-        await setup.renderOnce();
-      });
+      await paint(setup);
       const frame = setup.captureCharFrame();
       expect(frame).toContain("respuesta");
       expect(frame).toContain("▸");
@@ -111,6 +128,7 @@ describe("MessageList metadata", () => {
         id: "a1",
         role: "assistant",
         text: "ok",
+        toolCalls: [],
         model: "auto",
         provider: "cursor",
         status: "done",
@@ -132,9 +150,7 @@ describe("MessageList metadata", () => {
     });
 
     try {
-      await act(async () => {
-        await setup.renderOnce();
-      });
+      await paint(setup);
       expect(setup.captureCharFrame()).not.toContain("Input");
 
       await act(async () => {
@@ -151,6 +167,77 @@ describe("MessageList metadata", () => {
       expect(frame).toContain("▾");
       expect(frame).toContain("Input");
       expect(frame).toContain("Provider");
+    } finally {
+      setup.renderer.destroy();
+    }
+  });
+
+  test("muestra tool row y markdown del asistente", async () => {
+    const turns: Turn[] = [
+      {
+        id: "a1",
+        role: "assistant",
+        text: "**hola** mundo",
+        toolCalls: [
+          {
+            type: "tool-call",
+            id: "tc-1",
+            name: "read",
+            args: { path: "packages/cli/src/foo.ts" },
+            result: "ok",
+          },
+        ],
+        model: "auto",
+        provider: "cursor",
+        status: "done",
+        usage: null,
+      },
+    ];
+
+    const setup = await testRender(<MessageList turns={turns} />, {
+      width: 80,
+      height: 16,
+    });
+
+    try {
+      await paint(setup);
+      const frame = setup.captureCharFrame();
+      expect(frame).toContain("✔");
+      expect(frame).toContain("Read");
+      expect(frame).toContain("foo.ts");
+      expect(frame).toContain("hola");
+      expect(frame).toContain("mundo");
+    } finally {
+      setup.renderer.destroy();
+    }
+  });
+
+  test("oculta marcadores de heading y negrita", async () => {
+    const turns: Turn[] = [
+      {
+        id: "a1",
+        role: "assistant",
+        text: "## Titulo\n\n**hola** mundo",
+        toolCalls: [],
+        model: "auto",
+        provider: "cursor",
+        status: "done",
+        usage: null,
+      },
+    ];
+
+    const setup = await testRender(<MessageList turns={turns} />, {
+      width: 80,
+      height: 16,
+    });
+
+    try {
+      await paint(setup);
+      const frame = setup.captureCharFrame();
+      expect(frame).toContain("Titulo");
+      expect(frame).toContain("hola");
+      expect(frame).not.toContain("##");
+      expect(frame).not.toContain("**");
     } finally {
       setup.renderer.destroy();
     }
