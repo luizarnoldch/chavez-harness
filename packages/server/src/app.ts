@@ -2,7 +2,7 @@ import { swaggerUI } from "@hono/swagger-ui";
 import { OpenAPIHono } from "@hono/zod-openapi";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
-import config from "./lib/config.ts";
+import config, { isAllowedWebOrigin } from "./lib/config.ts";
 import db from "./lib/db.ts";
 import {
   registerAuthOpenApiPaths,
@@ -57,7 +57,11 @@ export function createApp(options: CreateAppOptions = {}) {
   app.use(
     "*",
     cors({
-      origin: config.webUrl,
+      origin: (origin) => {
+        // No Origin (curl / CLI Bearer): reflect primary web origin.
+        if (!origin) return config.webUrl;
+        return isAllowedWebOrigin(origin) ? origin : null;
+      },
       credentials: true,
       allowHeaders: ["Content-Type", "Authorization"],
       allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],

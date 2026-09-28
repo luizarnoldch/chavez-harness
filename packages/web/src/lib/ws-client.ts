@@ -1,10 +1,23 @@
 import type { WsReply } from "@chavez-harness/shared";
 import { getApiUrl } from "./env";
 import { readSessionToken } from "./session-token";
+import { randomId } from "./uuid";
 
 export type PushHandler = (message: Record<string, unknown>) => void;
 
-function toWsUrl(): string {
+export type OpenHandler = (info: { reconnect: boolean }) => void | Promise<void>;
+
+export type ChavezWsClientOptions = {
+  onPush?: PushHandler;
+  /** Called after every successful socket open (first connect and reconnects). */
+  onOpen?: OpenHandler;
+  /** Called when the socket closes (before reconnect scheduling). */
+  onClose?: () => void;
+  autoReconnect?: boolean;
+};
+
+/** Build ws(s)://…/ws?token=… — token is read fresh on every open. */
+export function toWsUrl(): string {
   const base =
     getApiUrl() ||
     (typeof window !== "undefined" ? window.location.origin : "http://localhost:4321");
@@ -29,13 +42,9 @@ export class ChavezWsClient {
   private closedByUser = false;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private attempt = 0;
+  private everOpened = false;
 
-  constructor(
-    private readonly options: {
-      onPush?: PushHandler;
-      autoReconnect?: boolean;
-    } = {},
-  ) {}
+  constructor(private readonly options: ChavezWsClientOptions = {}) {}
 
   connect(): Promise<void> {
     this.closedByUser = false;
@@ -54,7 +63,19 @@ export class ChavezWsClient {
       const onOpen = () => {
         this.attempt = 0;
         cleanup();
-        resolve();
+        const reconnect = this.everOpened;
+        this.everOpened = true;
+        void Promise.resolve()
+          .then(() => this.options.onOpen?.({ reconnect }))
+          .then(() => resolve())
+          .catch((err) => {
+            if (!reconnect) {
+              reject(err instanceof Error ? err : new Error(String(err)));
+              return;
+            }
+            console.error("[ws] onOpen reconnect failed", err);
+            resolve();
+          });
       };
       const onError = () => {
         cleanup();
@@ -67,7 +88,7 @@ export class ChavezWsClient {
       socket.addEventListener("open", onOpen);
       socket.addEventListener("error", onError);
       socket.addEventListener("message", (event) => this.onMessage(String(event.data)));
-      socket.addEventListener("close", () => this.onClose());
+      socket.addEventListener("close", () => this.onSocketClose());
     });
   }
 
@@ -92,12 +113,14 @@ export class ChavezWsClient {
     pending.resolve(msg as WsReply);
   }
 
-  private onClose() {
+  private onSocketClose() {
     for (const [, pending] of this.pending) {
       pending.reject(new Error("WebSocket cerrado"));
     }
     this.pending.clear();
     this.socket = null;
+
+    this.options.onClose?.();
 
     if (this.closedByUser || this.options.autoReconnect === false) return;
     const delay = Math.min(1000 * 2 ** this.attempt, 15000);
@@ -111,7 +134,7 @@ export class ChavezWsClient {
     type: string,
     payload: Record<string, unknown> = {},
   ): Promise<T> {
-    const id = crypto.randomUUID();
+    const id = randomId();
     const socket = this.socket;
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       return Promise.reject(new Error("WebSocket no conectado"));
@@ -134,7 +157,10 @@ export class ChavezWsClient {
 
   close() {
     this.closedByUser = true;
-    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     this.socket?.close();
     this.socket = null;
   }

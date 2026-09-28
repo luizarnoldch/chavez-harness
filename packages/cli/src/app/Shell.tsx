@@ -16,6 +16,7 @@ import { CHAT_FETCHER_KEY } from "../features/chat/pane/ChatPane";
 import { CommandMenu } from "../features/chat/input/CommandMenu";
 import { MessageList } from "../features/chat/pane/MessageList";
 import { ModelsDialog } from "../features/chat/dialogs/ModelsDialog";
+import { SkillsDialog } from "../features/chat/dialogs/SkillsDialog";
 import { SessionsDialog } from "../features/chat/dialogs/SessionsDialog";
 import { ConnectDialog } from "../features/providers/ui/ConnectDialog";
 import { Prompt } from "../features/chat/input/Prompt";
@@ -28,6 +29,8 @@ import {
 } from "../features/session/model";
 import type { Session } from "../features/session/store";
 import { shortSessionId } from "../features/session/store";
+import { resolveHarnessRepoRoot } from "../features/workspace/ws/cursor-sdk";
+import { listProjectSkills } from "../features/workspace/ws/project-skills";
 import { useWorkspaceConnection } from "../features/workspace/ui/WorkspaceConnection";
 import { useDialog } from "../lib/providers/Dialog";
 import { useToast } from "../lib/providers/Toast";
@@ -156,6 +159,10 @@ export function Shell() {
 
   const messageCount = session?.turns.filter((turn) => turn.role === "user").length ?? 0;
   const sessionLabel = sessionId ? shortSessionId(sessionId) : "nueva";
+  const skillCount = useMemo(
+    () => listProjectSkills(resolveHarnessRepoRoot()).length,
+    [],
+  );
 
   return (
     <box flexDirection="column" flexGrow={1}>
@@ -221,6 +228,7 @@ export function Shell() {
             }}
           />
         ) : null}
+        {dialog.current === "skills-list" ? <SkillsDialog onClose={dialog.close} /> : null}
         {dialog.current === "connect" ? (
           <ConnectDialog
             onClose={dialog.close}
@@ -261,6 +269,7 @@ export function Shell() {
           provider={draftProvider}
           mode={mode}
           streamPhase={streamPhase}
+          skillCount={skillCount}
           onOpenModels={() => dialog.open("models")}
         />
       </box>
@@ -279,6 +288,7 @@ export function ShellFallback() {
           model={DEFAULT_SESSION_MODEL}
           provider={DEFAULT_SESSION_PROVIDER}
           mode="plan"
+          skillCount={listProjectSkills(resolveHarnessRepoRoot()).length}
         />
       </box>
     </box>

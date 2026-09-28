@@ -22,6 +22,7 @@ cd packages/cli && bun run typecheck
 | Documento | Contenido |
 |-----------|-----------|
 | [architecture.md](./architecture.md) | Monorepo, stack, layout y flujo de estado |
+| [ops-realtime-sync.md](./ops-realtime-sync.md) | Sync multi-dispositivo, badge En vivo, checklist prod |
 | [cli-ux.md](./cli-ux.md) | Comportamiento de UI |
 | [shortcuts.md](./shortcuts.md) | Atajos de teclado (generado) |
 | [commands.md](./commands.md) | Slash commands (generado) |

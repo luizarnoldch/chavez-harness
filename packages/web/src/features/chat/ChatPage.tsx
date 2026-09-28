@@ -8,6 +8,8 @@ import type {
 } from "@chavez-harness/shared";
 import { toast } from "sonner";
 import { getSessionWithMessages, getWorkspace } from "@/lib/api";
+import { ensureSessionToken } from "@/lib/session-token";
+import { randomId } from "@/lib/uuid";
 import { ChavezWsClient } from "@/lib/ws-client";
 import { AuthShell } from "@/features/auth/AuthShell";
 import { Button } from "@/components/ui/button";
@@ -115,9 +117,47 @@ export function ChatPage({ sessionId }: ChatPageProps) {
 
     let cancelled = false;
     const workspaceId = session.workspaceId;
+    let pathForBind: string | null = null;
+
+    const bindAndSync = async (client: ChavezWsClient) => {
+      if (!pathForBind) {
+        const workspace = await getWorkspace(workspaceId);
+        pathForBind = workspace.path;
+        setWorkspacePath(workspace.path);
+      }
+      await client.request("workspace.bind", {
+        path: pathForBind,
+        clientKind: "client",
+      });
+      await client.request("workspace.sync", {
+        workspaceId,
+        chatSessionId: sessionId,
+      });
+    };
 
     const client = new ChavezWsClient({
       autoReconnect: true,
+      onClose: () => {
+        if (!cancelled) setLive("connecting");
+      },
+      onOpen: async ({ reconnect }) => {
+        try {
+          await bindAndSync(client);
+          if (cancelled) return;
+          setLive("live");
+          if (reconnect) setError(null);
+        } catch (err) {
+          if (!cancelled) {
+            setLive("offline");
+            setError(
+              err instanceof Error
+                ? err.message
+                : "No se pudo sincronizar el chat en vivo",
+            );
+          }
+          if (!reconnect) throw err;
+        }
+      },
       onPush: (msg) => {
         if (msg.type === "session.message.created") {
           const data = msg.data as {
@@ -168,24 +208,22 @@ export function ChatPage({ sessionId }: ChatPageProps) {
 
     void (async () => {
       try {
+        await ensureSessionToken();
+        if (cancelled) return;
         const workspace = await getWorkspace(workspaceId);
         if (cancelled) return;
+        pathForBind = workspace.path;
         setWorkspacePath(workspace.path);
         await client.connect();
-        if (cancelled) return;
-        await client.request("workspace.bind", {
-          path: workspace.path,
-          clientKind: "client",
-        });
-        if (cancelled) return;
-        await client.request("workspace.sync", {
-          workspaceId,
-          chatSessionId: sessionId,
-        });
-        if (cancelled) return;
-        setLive("live");
-      } catch {
-        if (!cancelled) setLive("offline");
+      } catch (err) {
+        if (!cancelled) {
+          setLive("offline");
+          setError(
+            err instanceof Error
+              ? err.message
+              : "No se pudo sincronizar el chat en vivo",
+          );
+        }
       }
     })();
 
@@ -216,7 +254,7 @@ export function ChatPage({ sessionId }: ChatPageProps) {
       return;
     }
 
-    const clientMessageId = crypto.randomUUID();
+    const clientMessageId = randomId();
     pendingClientMsgId.current = clientMessageId;
     const optimistic = optimisticUserMessage(sessionId, text, mode, clientMessageId);
 
@@ -295,7 +333,8 @@ export function ChatPage({ sessionId }: ChatPageProps) {
             {mode === "build"
               ? "herramientas completas del agente (lectura, edición, shell, web…)."
               : "solo lectura (sin escritura ni shell)."}{" "}
-            El TUI muestra el chat en vivo solo si tiene abierta esta misma sesión.
+            «En vivo» indica que este navegador está enlazado al hub (no es un estado global
+            de la sesión). El TUI solo recibe el chat en vivo si tiene abierta esta misma sesión.
           </p>
         </div>
 

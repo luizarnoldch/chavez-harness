@@ -132,3 +132,26 @@ describe("/connect", () => {
     expect(seen.id).toBe("connect");
   });
 });
+
+describe("/skills-list", () => {
+  test("abre el diálogo skills-list", () => {
+    const command = COMMANDS.find((item) => item.name === "skills-list");
+    if (!command?.action) throw new Error("/skills-list sin action");
+
+    const seen = { id: "" };
+    command.action({
+      exit() {},
+      newSession() {},
+      logout() {},
+      toast() {},
+      dialog: {
+        open(id) {
+          seen.id = id;
+        },
+        close() {},
+      },
+    });
+
+    expect(seen.id).toBe("skills-list");
+  });
+});

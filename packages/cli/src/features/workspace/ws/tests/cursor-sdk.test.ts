@@ -1,11 +1,15 @@
 import { describe, expect, mock, test } from "bun:test";
 import type { SDKAgent } from "@cursor/sdk";
 import { CURSOR_PLAN_TOOLS } from "@chavez-harness/shared";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import type { Credentials } from "../../../auth/api/credentials.ts";
 import {
+  cursorLocalOptions,
   progressFromSdkMessage,
   progressEventsFromSdkMessage,
   resolveCursorModelId,
+  resolveHarnessRepoRoot,
   runCursorSdkGenerate,
   textFromRunResult,
   toolsForChatMode,
@@ -14,6 +18,14 @@ import {
 } from "../cursor-sdk.ts";
 
 describe("cursor-sdk helpers", () => {
+  test("resolveHarnessRepoRoot points at the repo that contains .cursor/skills", () => {
+    const root = resolveHarnessRepoRoot();
+    expect(root.endsWith("chavez-harness")).toBe(true);
+    expect(
+      existsSync(join(root, ".cursor", "skills", "skill-pack", "SKILL.md")),
+    ).toBe(true);
+  });
+
   test("resolveCursorModelId defaults eco/local/empty to auto", () => {
     expect(resolveCursorModelId("")).toBe("auto");
     expect(resolveCursorModelId("eco")).toBe("auto");
@@ -267,7 +279,7 @@ describe("runCursorSdkGenerate (mocked Agent)", () => {
       expect(resume).toHaveBeenCalledWith("agent-prev", {
         apiKey: "sk-test",
         model: { id: "auto" },
-        local: { cwd: "/tmp/ws" },
+        local: cursorLocalOptions("/tmp/ws"),
       });
       expect(create).toHaveBeenCalledTimes(0);
       expect(send).toHaveBeenCalledWith("sigue", { model: { id: "auto" } });
@@ -298,7 +310,7 @@ describe("runCursorSdkGenerate (mocked Agent)", () => {
       expect(create).toHaveBeenCalledWith({
         apiKey: "sk-test",
         model: { id: "auto" },
-        local: { cwd: "/tmp/ws" },
+        local: cursorLocalOptions("/tmp/ws"),
         tools: [...CURSOR_PLAN_TOOLS],
       });
     } finally {
@@ -335,7 +347,7 @@ describe("runCursorSdkGenerate (mocked Agent)", () => {
       expect(resume).toHaveBeenCalledWith("agent-prev", {
         apiKey: "sk-test",
         model: { id: "auto" },
-        local: { cwd: "/tmp/ws" },
+        local: cursorLocalOptions("/tmp/ws"),
         tools: [...CURSOR_PLAN_TOOLS],
       });
       expect(create).toHaveBeenCalledTimes(0);
@@ -366,7 +378,7 @@ describe("runCursorSdkGenerate (mocked Agent)", () => {
       expect(create).toHaveBeenCalledWith({
         apiKey: "sk-test",
         model: { id: "auto" },
-        local: { cwd: "/tmp/ws" },
+        local: cursorLocalOptions("/tmp/ws"),
       });
     } finally {
       restore();
@@ -466,7 +478,7 @@ describe("runCursorSdkGenerate (mocked Agent)", () => {
       expect(resume).toHaveBeenCalledWith("stale-id", {
         apiKey: "sk-test",
         model: { id: "auto" },
-        local: { cwd: "/tmp/ws" },
+        local: cursorLocalOptions("/tmp/ws"),
       });
       expect(create).toHaveBeenCalledTimes(1);
     } finally {

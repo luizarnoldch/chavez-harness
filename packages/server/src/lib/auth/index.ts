@@ -2,7 +2,7 @@ import { betterAuth } from "better-auth";
 import { bearer } from "better-auth/plugins";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import * as schema from "@/db/schema";
-import config from "../config";
+import config, { isAllowedWebOrigin } from "../config";
 import db from "../db";
 import { hooksOptions } from "./hooks/createMiddleware";
 import { emailAndPasswordOptions } from "./email-password/email";
@@ -22,7 +22,14 @@ export const auth = betterAuth({
   emailVerification: emailVerificationOptions,
   hooks: hooksOptions,
   plugins: [bearer()],
-  trustedOrigins: [config.webUrl],
+  trustedOrigins: async (request) => {
+    const origins = [...config.trustedOrigins];
+    const origin = request?.headers.get("origin") ?? undefined;
+    if (origin && isAllowedWebOrigin(origin) && !origins.includes(origin)) {
+      origins.push(origin);
+    }
+    return origins;
+  },
   advanced: {
     useSecureCookies: secureCookies,
     defaultCookieAttributes: {

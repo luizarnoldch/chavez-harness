@@ -12,6 +12,7 @@ El menú y el submit leen `COMMANDS`. No copies esta tabla en otros documentos.
 | `/exit` | Salir de la aplicación | `exit` |
 | `/connect` | Conectar provider (API key) | `connect` |
 | `/models` | Elige el modelo del chat | `models` |
+| `/skills-list` | Lista las skills cargadas | `skills-list` |
 | `/logout` | Cerrar sesión | `logout` |
 
 ## Cómo añadir un comando

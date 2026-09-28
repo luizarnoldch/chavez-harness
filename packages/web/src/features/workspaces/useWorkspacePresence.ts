@@ -7,6 +7,7 @@ import {
   getWorkspaceConnections,
   setWorkspaceDaemon,
 } from "@/lib/api";
+import { ensureSessionToken } from "@/lib/session-token";
 import { ChavezWsClient } from "@/lib/ws-client";
 import type { DaemonStatus, MachineStatus, PresenceState } from "./PresencePanel";
 
@@ -81,8 +82,43 @@ export function useWorkspacePresence(
     }
 
     let cancelled = false;
+
+    const bindAndSync = async (client: ChavezWsClient) => {
+      await client.request("workspace.bind", {
+        path,
+        clientKind: "client",
+      });
+      const sync = await client.request<{
+        daemonStatus: DaemonStatus;
+        machineStatus?: MachineStatus;
+        workspace?: { daemonDesired?: "on" | "off" };
+        connections?: WorkspaceConnection[];
+      }>("workspace.sync", { workspaceId });
+      if (cancelled) return;
+      if (sync.machineStatus) setMachineStatus(sync.machineStatus);
+      setPresence(
+        toPresence(sync.daemonStatus, sync.connections ?? [], {
+          daemonDesired: sync.workspace?.daemonDesired,
+          machineStatus: sync.machineStatus,
+        }),
+      );
+    };
+
     const client = new ChavezWsClient({
       autoReconnect: true,
+      onClose: () => {
+        if (!cancelled) setLive("connecting");
+      },
+      onOpen: async ({ reconnect }) => {
+        try {
+          await bindAndSync(client);
+          if (!cancelled) setLive("live");
+        } catch (err) {
+          if (!cancelled) setLive("offline");
+          if (!reconnect) throw err;
+          console.error("[presence] rebind failed", err);
+        }
+      },
       onPush: (msg) => {
         if (msg.type === "machine.presence") {
           const data = msg.data as { status?: MachineStatus };
@@ -143,28 +179,9 @@ export function useWorkspacePresence(
 
     void (async () => {
       try {
+        await ensureSessionToken();
+        if (cancelled) return;
         await client.connect();
-        if (cancelled) return;
-        await client.request("workspace.bind", {
-          path,
-          clientKind: "client",
-        });
-        if (cancelled) return;
-        const sync = await client.request<{
-          daemonStatus: DaemonStatus;
-          machineStatus?: MachineStatus;
-          workspace?: { daemonDesired?: "on" | "off" };
-          connections?: WorkspaceConnection[];
-        }>("workspace.sync", { workspaceId });
-        if (cancelled) return;
-        if (sync.machineStatus) setMachineStatus(sync.machineStatus);
-        setPresence(
-          toPresence(sync.daemonStatus, sync.connections ?? [], {
-            daemonDesired: sync.workspace?.daemonDesired,
-            machineStatus: sync.machineStatus,
-          }),
-        );
-        setLive("live");
       } catch {
         if (!cancelled) setLive("offline");
       }

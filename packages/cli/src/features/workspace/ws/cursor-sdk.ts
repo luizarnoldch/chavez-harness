@@ -6,6 +6,9 @@ import {
   type ChatMessageUsage,
   type ChatMode,
 } from "@chavez-harness/shared";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { apiFetch } from "../../auth/api/api.ts";
 import type { Credentials } from "../../auth/api/credentials.ts";
 
@@ -48,7 +51,11 @@ export type CursorGenerateResult = {
 type AgentCreateOptions = {
   apiKey: string;
   model: { id: string };
-  local: { cwd: string };
+  local: {
+    cwd: string;
+    dirs: string[];
+    settingSources: Array<"project">;
+  };
   tools?: ToolName[];
 };
 
@@ -71,6 +78,31 @@ export function resolveCursorModelId(model: string): string {
     return DEFAULT_CURSOR_MODEL;
   }
   return trimmed;
+}
+
+/** Outermost ancestor that contains `.cursor/skills` (harness catalog, not a nested package). */
+export function resolveHarnessRepoRoot(
+  fromDir = dirname(fileURLToPath(import.meta.url)),
+): string {
+  let dir = fromDir;
+  let found: string | null = null;
+  for (let i = 0; i < 12; i++) {
+    if (existsSync(join(dir, ".cursor", "skills"))) found = dir;
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  if (found) return found;
+  throw new Error(".cursor/skills directory not found");
+}
+
+/** Local agent options: user cwd plus harness root so project skills load. */
+export function cursorLocalOptions(workspacePath: string): AgentCreateOptions["local"] {
+  return {
+    cwd: workspacePath,
+    dirs: [resolveHarnessRepoRoot()],
+    settingSources: ["project"],
+  };
 }
 
 /**
@@ -295,7 +327,7 @@ async function openAgent(
   const base = {
     apiKey,
     model: { id: modelId },
-    local: { cwd: workspacePath },
+    local: cursorLocalOptions(workspacePath),
     ...(tools !== undefined ? { tools } : {}),
   } satisfies AgentCreateOptions;
 

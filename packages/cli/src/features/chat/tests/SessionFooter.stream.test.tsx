@@ -63,6 +63,7 @@ describe("SessionFooter stream phase", () => {
       const frame = setup.captureCharFrame();
       expect(frame).toContain("completo");
       expect(frame).not.toContain("solo lectura");
+      expect(frame).toContain("0 skills");
     } finally {
       setup.renderer.destroy();
     }

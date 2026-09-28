@@ -14,6 +14,7 @@ type SessionFooterProps = {
   mode: AppMode;
   streamPhase?: "reasoning" | "streaming" | "tool" | null;
   onOpenModels?: () => void;
+  skillCount?: number;
 };
 
 type ModeChipProps = {
@@ -49,6 +50,7 @@ export function SessionFooter({
   mode,
   streamPhase = null,
   onOpenModels,
+  skillCount = 0,
 }: SessionFooterProps) {
   const [frame, setFrame] = useState(0);
 
@@ -109,6 +111,8 @@ export function SessionFooter({
           active={mode === "build"}
           activeColor={BUILD_COLOR}
         />
+        <text> </text>
+        <text attributes={TextAttributes.DIM}>{skillCount} skills</text>
       </box>
     </box>
   );

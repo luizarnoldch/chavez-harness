@@ -2,7 +2,7 @@
 
 import { useEffect, type ReactNode } from "react";
 import { authClient, signOut } from "@/lib/auth-client";
-import { storeSessionToken } from "@/lib/session-token";
+import { ensureSessionToken, storeSessionToken } from "@/lib/session-token";
 import { Button } from "@/components/ui/button";
 
 type AuthShellProps = {
@@ -18,6 +18,11 @@ export function AuthShell({ children, title }: AuthShellProps) {
       const next = encodeURIComponent(window.location.pathname);
       window.location.replace(`/login?next=${next}`);
     }
+  }, [isPending, session]);
+
+  useEffect(() => {
+    if (isPending || !session) return;
+    void ensureSessionToken();
   }, [isPending, session]);
 
   async function onSignOut() {

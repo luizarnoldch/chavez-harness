@@ -101,6 +101,8 @@ Protocolo tipado en [`packages/shared/src/ws/protocol.ts`](../packages/shared/sr
 
 Indicador TUI (StatusBar): **Desconectado** / **Conectado** (WS+bind) / **Sincronizado** (Host online + daemon online).
 
+Indicador web (chat): **En vivo** / **Conectando…** / **Sin sync** — estado **local del tab** tras `connect → bind → sync` (no exige Host/daemon). Detalle operativo y checklist de producción: [ops-realtime-sync.md](./ops-realtime-sync.md).
+
 Defaults mock: `provider=local`, `model=eco`.
 
 ## Modelo de datos (app)

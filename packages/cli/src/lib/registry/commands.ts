@@ -45,6 +45,14 @@ export const COMMANDS: Command[] = [
     },
   },
   {
+    name: "skills-list",
+    description: "Lista las skills cargadas",
+    value: "/skills-list",
+    action: (ctx: CommandContext) => {
+      ctx.dialog.open("skills-list");
+    },
+  },
+  {
     name: "logout",
     description: "Cerrar sesión",
     value: "/logout",
