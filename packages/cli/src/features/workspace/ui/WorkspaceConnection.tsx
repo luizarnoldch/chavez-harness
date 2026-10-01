@@ -15,14 +15,15 @@ import {
   type WorkspaceBridgeState,
 } from "../bridge.ts";
 
-type WorkspaceConnectionValue = {
+export type WorkspaceConnectionValue = {
   bridge: WorkspaceBridge;
   state: WorkspaceBridgeState;
   ready: boolean;
   status: LinkStatus;
 };
 
-const WorkspaceConnectionContext = createContext<WorkspaceConnectionValue | null>(null);
+/** Exported so tests can mount components against a bridge without the real connection boot. */
+export const WorkspaceConnectionContext = createContext<WorkspaceConnectionValue | null>(null);
 
 export function useWorkspaceConnection(): WorkspaceConnectionValue {
   const value = useContext(WorkspaceConnectionContext);

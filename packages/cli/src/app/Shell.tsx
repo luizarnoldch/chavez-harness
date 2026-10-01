@@ -31,6 +31,7 @@ import type { Session } from "../features/session/store";
 import { shortSessionId } from "../features/session/store";
 import { resolveHarnessRepoRoot } from "../features/workspace/ws/cursor-sdk";
 import { listProjectSkills } from "../features/workspace/ws/project-skills";
+import { isSessionGenerating } from "../features/workspace/bridge";
 import { useWorkspaceConnection } from "../features/workspace/ui/WorkspaceConnection";
 import { useDialog } from "../lib/providers/Dialog";
 import { useToast } from "../lib/providers/Toast";
@@ -60,7 +61,10 @@ export function Shell() {
   const matches = useMatches();
   const sessionId = matches.find((match) => match.id === "session")?.params.id;
   const session = useRouteLoaderData("session") as Session | undefined;
-  const busy = navigation.state !== "idle" || fetcher.state !== "idle";
+  // A generation started elsewhere (web) on this session also blocks sending from here.
+  const remoteGenerating = isSessionGenerating(linkState, sessionId);
+  const busy =
+    navigation.state !== "idle" || fetcher.state !== "idle" || remoteGenerating;
   const streamPhase =
     sessionId && linkState.generateStream?.sessionId === sessionId
       ? linkState.generateStream.phase
@@ -72,12 +76,24 @@ export function Shell() {
     }
   }, [busy, bridge]);
 
+  // Live settings of the open session: pushes from the web land in the bridge state,
+  // the route loader only covers the first render.
+  const liveSettings =
+    linkState.currentSession && linkState.currentSession.id === sessionId
+      ? linkState.currentSession
+      : null;
+  const settings = liveSettings ?? session ?? null;
+
   useEffect(() => {
-    if (session) {
-      setDraftProvider(session.provider);
-      setDraftModel(session.model);
+    if (settings) setMode(settings.mode);
+  }, [settings?.id, settings?.mode]);
+
+  useEffect(() => {
+    if (settings) {
+      setDraftProvider(settings.provider);
+      setDraftModel(settings.model);
     }
-  }, [session?.id, session?.provider, session?.model]);
+  }, [settings?.id, settings?.provider, settings?.model]);
 
   useEffect(() => {
     if (linkState.chatSessionId && !sessionId && navigation.state === "idle") {
@@ -95,6 +111,38 @@ export function Shell() {
       }
     });
   }, [bridge, sessionId, revalidator]);
+
+  // Current session deleted from another client: the bridge already opened a replacement.
+  useEffect(() => {
+    return bridge.onSessionDeleted((event) => {
+      if (event.local || event.deletedId !== sessionId) return;
+      navigate(event.nextId ? `/session/${event.nextId}` : "/session/new", { replace: true });
+    });
+  }, [bridge, sessionId, navigate]);
+
+  const applyModel = (provider: string, model: string) => {
+    const prevProvider = draftProvider;
+    const prevModel = draftModel;
+    setDraftProvider(provider);
+    setDraftModel(model);
+    if (!sessionId) return;
+    void bridge.updateSession(sessionId, { provider, model }).catch((err) => {
+      setDraftProvider(prevProvider);
+      setDraftModel(prevModel);
+      show(err instanceof Error ? err.message : "No se pudo cambiar el modelo", "error");
+    });
+  };
+
+  const toggleMode = () => {
+    const prev = mode;
+    const next: AppMode = prev === "plan" ? "build" : "plan";
+    setMode(next);
+    if (!sessionId) return;
+    void bridge.updateSession(sessionId, { mode: next }).catch((err) => {
+      setMode(prev);
+      show(err instanceof Error ? err.message : "No se pudo cambiar el modo", "error");
+    });
+  };
 
   const commandContext = useMemo<CommandContext>(
     () => ({
@@ -133,17 +181,18 @@ export function Shell() {
     if (matchesShortcut(key, getShortcut("cycle-model"))) {
       key.preventDefault();
       const next = nextSelectableChatModel(draftProvider, draftModel);
-      setDraftProvider(next.provider);
-      setDraftModel(next.id);
+      applyModel(next.provider, next.id);
       return;
     }
     if (matchesShortcut(key, getShortcut("toggle-mode"))) {
       key.preventDefault();
-      setMode((prev) => (prev === "plan" ? "build" : "plan"));
+      toggleMode();
     }
   });
 
   const handleSend = (text: string) => {
+    // Never overlap a generation, even one started from the web on this session.
+    if (busy) return;
     const body = new FormData();
     body.set("text", text);
     body.set("mode", mode);
@@ -171,6 +220,7 @@ export function Shell() {
         sessionLabel={sessionLabel}
         linkStatus={status}
         workspacePath={linkState.path}
+        notice={linkState.notice}
         open={statusPanelOpen}
         onToggle={() => setStatusPanelOpen((prev) => !prev)}
       />
@@ -191,8 +241,7 @@ export function Shell() {
             currentModel={draftModel}
             onClose={dialog.close}
             onSelect={({ provider, model }) => {
-              setDraftProvider(provider);
-              setDraftModel(model);
+              applyModel(provider, model);
               dialog.close();
             }}
             onUnsupported={(provider) => {

@@ -33,6 +33,8 @@ function baseConn(
     userId: overrides.userId ?? "user-1",
     socket: overrides.socket ?? socket,
     clientKind: overrides.clientKind ?? null,
+    clientLabel: overrides.clientLabel ?? null,
+    observeUser: overrides.observeUser ?? false,
     workspaceId: overrides.workspaceId ?? null,
     workspacePath: overrides.workspacePath ?? null,
     daemonId: overrides.daemonId ?? null,

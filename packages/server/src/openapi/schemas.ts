@@ -106,6 +106,7 @@ export const WorkspaceConnectionSchema = z
     connectionId: z.string(),
     clientKind: z.enum(["daemon", "client", "host"]).nullable(),
     role: z.enum(["primary", "standby"]).nullable().optional(),
+    clientLabel: z.enum(["tui", "web"]).nullable().optional(),
   })
   .openapi("WorkspaceConnection");
 
@@ -171,6 +172,38 @@ export const CreateSessionBodySchema = z
     model: z.string().min(1).optional(),
   })
   .openapi("CreateSessionBody");
+
+export const UpdateSessionBodySchema = z
+  .object({
+    mode: ChatModeSchema.optional(),
+    provider: z.string().min(1).optional(),
+    model: z.string().min(1).optional(),
+    title: z.string().max(200).nullable().optional(),
+  })
+  .openapi("UpdateSessionBody");
+
+export const UpdateSessionResponseSchema = z
+  .object({
+    session: ChatSessionSchema,
+    changed: z.array(z.enum(["mode", "provider", "model", "title"])),
+  })
+  .openapi("UpdateSessionResponse");
+
+export const DashboardWorkspaceSchema = WorkspaceSchema.extend({
+  daemonStatus: z.enum(["online", "offline", "stale"]),
+  connections: z.array(WorkspaceConnectionSchema),
+  sessionCount: z.number().int(),
+}).openapi("DashboardWorkspace");
+
+export const DashboardSnapshotSchema = z
+  .object({
+    machineStatus: MachinePresenceSchema,
+    workspaces: z.array(DashboardWorkspaceSchema),
+    recentSessions: z.array(ChatSessionSchema.extend({ workspacePath: z.string() })),
+    sessionsToday: z.number().int(),
+    generatedAt: z.string(),
+  })
+  .openapi("DashboardSnapshot");
 
 export const ChatMessageSchema = z
   .object({

@@ -1,0 +1,20 @@
+---
+export const prerender = false;
+import Layout from "@/layouts/Layout.astro";
+import { ComingSoonPage } from "@/features/placeholders/ComingSoonPage";
+import { findNavItem, type NavKey } from "@/components/shell/nav-items";
+
+/** Arsenal sections without a backend yet; /arsenal/providers has its own page. */
+const SECTIONS = ["agents", "skills", "workflows", "sync"] as const;
+
+const { section } = Astro.params;
+if (!section || !(SECTIONS as readonly string[]).includes(section)) {
+  return Astro.redirect("/arsenal");
+}
+const key = `arsenal:${section}` as NavKey;
+const label = findNavItem(key)?.label ?? "Arsenal";
+---
+
+<Layout title={`${label} · Chavez`}>
+  <ComingSoonPage client:load section={key} />
+</Layout>

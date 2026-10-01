@@ -1,13 +1,56 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
-@import "@fontsource-variable/geist";
 
 @custom-variant dark (&:is(.dark *));
+@custom-variant rail-collapsed (&:is(html[data-rail="collapsed"] *));
+
+/* ==========================================================================
+   Fonts — Archivo (display), IBM Plex Sans (body), IBM Plex Mono (code).
+   Self-hosted from /public/fonts (same files as the paperclip-clone mock).
+   ========================================================================== */
+@font-face {
+  font-family: "Archivo";
+  font-weight: 600 700;
+  font-style: normal;
+  font-display: swap;
+  src: url("/fonts/archivo-variable.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "IBM Plex Sans";
+  font-weight: 400 500;
+  font-style: normal;
+  font-display: swap;
+  src: url("/fonts/ibm-plex-sans-variable.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+  src: url("/fonts/ibm-plex-mono-400.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+  src: url("/fonts/ibm-plex-mono-500.woff2") format("woff2");
+}
+
+/* Desktop breakpoint: rail replaces the bottom tab bar (mock: >= 900px). */
+@theme {
+  --breakpoint-desk: 56.25rem;
+}
 
 @theme inline {
-  --font-heading: var(--font-sans);
-  --font-sans: "Geist Variable", sans-serif;
+  --font-heading: "Archivo", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -24,98 +67,388 @@
   --color-ring: var(--ring);
   --color-input: var(--input);
   --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
   --color-destructive: var(--destructive);
+  --color-destructive-soft: var(--destructive-soft);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
   --color-muted: var(--muted);
+  --color-faint: var(--faint);
   --color-secondary-foreground: var(--secondary-foreground);
   --color-secondary: var(--secondary);
   --color-primary-foreground: var(--primary-foreground);
   --color-primary: var(--primary);
+  --color-primary-strong: var(--primary-strong);
+  --color-primary-soft: var(--primary-soft);
   --color-popover-foreground: var(--popover-foreground);
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
   --color-foreground: var(--foreground);
   --color-background: var(--background);
-  --color-plan: var(--plan);
-  --color-build: var(--build);
-  --radius-sm: calc(var(--radius) * 0.6);
-  --radius-md: calc(var(--radius) * 0.8);
+
+  /* agent-owned things (brass) */
+  --color-agent: var(--agent);
+  --color-agent-soft: var(--agent-soft);
+
+  /* chat modes */
+  --color-stage-plan: var(--stage-plan);
+  --color-stage-plan-soft: var(--stage-plan-soft);
+  --color-stage-build: var(--stage-build);
+  --color-stage-build-soft: var(--stage-build-soft);
+
+  /* status pills */
+  --color-status-backlog: var(--status-backlog);
+  --color-status-backlog-soft: var(--status-backlog-soft);
+  --color-status-planned: var(--status-planned);
+  --color-status-planned-soft: var(--status-planned-soft);
+  --color-status-todo: var(--status-todo);
+  --color-status-todo-soft: var(--status-todo-soft);
+  --color-status-progress: var(--status-in_progress);
+  --color-status-progress-soft: var(--status-in_progress-soft);
+  --color-status-blocked: var(--status-blocked);
+  --color-status-blocked-soft: var(--status-blocked-soft);
+  --color-status-review: var(--status-in_review);
+  --color-status-review-soft: var(--status-in_review-soft);
+  --color-status-done: var(--status-done);
+  --color-status-done-soft: var(--status-done-soft);
+
+  /* diffs */
+  --color-diff-add: var(--diff-add);
+  --color-diff-add-soft: var(--diff-add-soft);
+  --color-diff-del: var(--diff-del);
+  --color-diff-del-soft: var(--diff-del-soft);
+
+  /* 6 / 10 / 14px = sm / lg / xl (mock radius-sm / md / lg) */
+  --radius-sm: 6px;
+  --radius-md: 8px;
   --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) * 1.4);
-  --radius-2xl: calc(var(--radius) * 1.8);
-  --radius-3xl: calc(var(--radius) * 2.2);
-  --radius-4xl: calc(var(--radius) * 2.6);
+  --radius-xl: 14px;
+  --radius-2xl: 18px;
+  --radius-3xl: 22px;
+  --radius-4xl: 26px;
 }
 
-/* Tokyo Night-aligned dark (CLI chrome) as default */
+/* ==========================================================================
+   Paper + wire palette (from paperclip-clone css/tokens.css).
+   Light is the default; `.dark` on <html> is set by the inline script in
+   Layout.astro from localStorage["harness:theme"] or prefers-color-scheme.
+   ========================================================================== */
+:root {
+  --radius: 10px;
+
+  /* swatches */
+  --swatch-gray: #888e97;
+  --swatch-violet: #7c6fa6;
+  --swatch-slate: #5b7a99;
+  --swatch-blue: #3563a6;
+  --swatch-amber: #c6862c;
+  --swatch-rust: #b14b3c;
+  --swatch-teal: #3c8f87;
+  --swatch-green: #3f8f5f;
+
+  /* raw paper + wire */
+  --surface: #ffffff;
+  --background: #f2f4f1;
+  --foreground: #14171b;
+  --popover: #ffffff;
+  --primary: #3e6b85;
+  --primary-strong: #2f5468;
+  --primary-foreground: #ffffff;
+  --primary-soft: color-mix(in srgb, var(--primary) 12%, var(--surface));
+  --secondary: #e7eae5;
+  --muted: #e7eae5;
+  --muted-foreground: #545b57;
+  --faint: #8a9089;
+  --accent: #e7eae5;
+  --destructive: #b3423a;
+  --destructive-soft: color-mix(in srgb, var(--destructive) 14%, var(--surface));
+  --border: #d7dbd3;
+  --border-strong: #b9bfb6;
+  --input: #d7dbd3;
+
+  --agent: #a8792e;
+  --agent-soft: color-mix(in srgb, var(--agent) 16%, var(--surface));
+
+  --chart-1: var(--swatch-blue);
+  --chart-2: var(--swatch-green);
+  --chart-3: var(--swatch-amber);
+  --chart-4: var(--swatch-violet);
+  --chart-5: var(--swatch-teal);
+
+
+  --shadow-sm: 0 1px 2px color-mix(in srgb, #14171b 8%, transparent);
+  --shadow-md: 0 4px 16px color-mix(in srgb, #14171b 12%, transparent);
+  --shadow-lg: 0 12px 40px color-mix(in srgb, #14171b 20%, transparent);
+}
+
+.dark {
+  --swatch-gray: #9aa0a8;
+  --swatch-violet: #9c8fc4;
+  --swatch-slate: #7fa0bd;
+  --swatch-blue: #6f97cf;
+  --swatch-amber: #dba250;
+  --swatch-rust: #cf7266;
+  --swatch-teal: #5cb0a7;
+  --swatch-green: #63b17f;
+
+  --surface: #1b1f24;
+  --background: #14171b;
+  --foreground: #edefec;
+  --popover: #23282f;
+  --primary: #74a6c4;
+  --primary-strong: #a7cfe6;
+  --primary-foreground: #0c1a20;
+  --primary-soft: color-mix(in srgb, var(--primary) 16%, var(--surface));
+  --secondary: #0f1215;
+  --muted: #0f1215;
+  --muted-foreground: #a7adb6;
+  --faint: #6b7480;
+  --accent: #23282f;
+  --destructive: #d97b70;
+  --destructive-soft: color-mix(in srgb, var(--destructive) 16%, var(--surface));
+  --border: #2c323a;
+  --border-strong: #3c434c;
+  --input: #2c323a;
+
+  --agent: #c79a52;
+  --agent-soft: color-mix(in srgb, var(--agent) 18%, var(--surface));
+
+  --shadow-sm: 0 1px 2px color-mix(in srgb, black 40%, transparent);
+  --shadow-md: 0 4px 16px color-mix(in srgb, black 45%, transparent);
+  --shadow-lg: 0 16px 48px color-mix(in srgb, black 55%, transparent);
+}
+
+/* Derived tokens: re-evaluated per theme because they read the swatches above. */
 :root,
 .dark {
-  --background: #1a1b26;
-  --foreground: #c0caf5;
-  --card: #1f2335;
-  --card-foreground: #c0caf5;
-  --popover: #1f2335;
-  --popover-foreground: #c0caf5;
-  --primary: #7aa2f7;
-  --primary-foreground: #1a1b26;
-  --secondary: #24283b;
-  --secondary-foreground: #c0caf5;
-  --muted: #24283b;
-  --muted-foreground: #a9b1d6;
-  --accent: #292e42;
-  --accent-foreground: #c0caf5;
-  --destructive: #f7768e;
-  --border: #414868;
-  --input: #414868;
-  --ring: #7aa2f7;
-  --plan: #e0af68;
-  --build: #9ece6a;
-  --chart-1: #7aa2f7;
-  --chart-2: #9ece6a;
-  --chart-3: #e0af68;
-  --chart-4: #bb9af7;
-  --chart-5: #7dcfff;
-  --radius: 0.75rem;
-  --sidebar: #1f2335;
-  --sidebar-foreground: #c0caf5;
-  --sidebar-primary: #7aa2f7;
-  --sidebar-primary-foreground: #1a1b26;
-  --sidebar-accent: #24283b;
-  --sidebar-accent-foreground: #c0caf5;
-  --sidebar-border: #414868;
-  --sidebar-ring: #7aa2f7;
+  --card: var(--surface);
+  --card-foreground: var(--foreground);
+  --popover-foreground: var(--foreground);
+  --secondary-foreground: var(--foreground);
+  --accent-foreground: var(--foreground);
+  --ring: var(--primary);
+
+  --sidebar: var(--surface);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: var(--primary-soft);
+  --sidebar-accent-foreground: var(--primary-strong);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--ring);
+
+  --stage-plan: var(--swatch-violet);
+  --stage-plan-soft: color-mix(in srgb, var(--swatch-violet) 14%, var(--surface));
+  --stage-build: var(--swatch-amber);
+  --stage-build-soft: color-mix(in srgb, var(--swatch-amber) 14%, var(--surface));
+
+  --status-backlog: var(--swatch-gray);
+  --status-backlog-soft: color-mix(in srgb, var(--swatch-gray) 14%, var(--surface));
+  --status-planned: var(--swatch-violet);
+  --status-planned-soft: color-mix(in srgb, var(--swatch-violet) 14%, var(--surface));
+  --status-todo: var(--swatch-slate);
+  --status-todo-soft: color-mix(in srgb, var(--swatch-slate) 14%, var(--surface));
+  --status-in_progress: var(--swatch-amber);
+  --status-in_progress-soft: color-mix(in srgb, var(--swatch-amber) 14%, var(--surface));
+  --status-blocked: var(--swatch-rust);
+  --status-blocked-soft: color-mix(in srgb, var(--swatch-rust) 14%, var(--surface));
+  --status-in_review: var(--swatch-teal);
+  --status-in_review-soft: color-mix(in srgb, var(--swatch-teal) 14%, var(--surface));
+  --status-done: var(--swatch-green);
+  --status-done-soft: color-mix(in srgb, var(--swatch-green) 14%, var(--surface));
+
+  --diff-add: var(--swatch-green);
+  --diff-add-soft: color-mix(in srgb, var(--swatch-green) 13%, var(--surface));
+  --diff-del: var(--swatch-rust);
+  --diff-del-soft: color-mix(in srgb, var(--swatch-rust) 13%, var(--surface));
 }
 
 @layer base {
   * {
     @apply border-border outline-ring/50;
-  }
-  body {
-    @apply bg-background text-foreground antialiased;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
   }
   html {
     @apply font-sans;
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    /* 15px reads better at arm's length; desktop drops to 14px (mock layout.css) */
+    font-size: 0.9375rem;
+    line-height: 1.5;
+    overscroll-behavior-y: none;
+    text-rendering: optimizeLegibility;
+  }
+  @media (min-width: 56.25rem) {
+    body {
+      font-size: 0.875rem;
+    }
+  }
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family: var(--font-heading);
+    font-weight: 700;
+    line-height: 1.2;
+    text-wrap: balance;
+  }
+  code,
+  pre,
+  kbd {
+    font-family: var(--font-mono);
+  }
+  ::selection {
+    background: var(--primary-soft);
+    color: var(--foreground);
+  }
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    border-radius: 999px;
+    border: 2px solid var(--background);
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
   }
 }
 
-/* Assistant markdown (TanStack Markdown) inside chat bubbles */
+@layer utilities {
+  .eyebrow {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--faint);
+  }
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .pt-safe {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+}
+
+/* ==========================================================================
+   Motion helpers (status pills, "working" dots, shimmer, caret)
+   ========================================================================== */
+@keyframes pulse-dot {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 55%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 5px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+@keyframes dot-bounce {
+  0%,
+  80%,
+  100% {
+    transform: scale(0.6);
+    opacity: 0.5;
+  }
+  40% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes shimmer-text {
+  from {
+    background-position: 120% 0;
+  }
+  to {
+    background-position: -120% 0;
+  }
+}
+
+@keyframes caret-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+.animate-pulse-dot {
+  animation: pulse-dot 1.4s cubic-bezier(0.2, 0.65, 0.3, 1) infinite;
+}
+
+.working-dots i {
+  display: block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--agent);
+  animation: dot-bounce 1.2s infinite ease-in-out;
+}
+.working-dots i:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.working-dots i:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+.shimmer-text {
+  background: linear-gradient(90deg, var(--faint) 20%, var(--foreground) 45%, var(--faint) 70%);
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer-text 1.6s linear infinite;
+}
+.shimmer-text code {
+  color: inherit;
+  background: none;
+}
+
+.stream-caret {
+  display: inline-block;
+  width: 7px;
+  height: 1.05em;
+  margin-left: 2px;
+  vertical-align: -2px;
+  background: var(--agent);
+  animation: caret-blink 0.9s steps(1) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ==========================================================================
+   Assistant markdown (TanStack Markdown) — adapted from mock css/markdown.css
+   ========================================================================== */
 .chat-markdown {
+  font-size: 0.875rem;
+  line-height: 1.6;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-width: 0;
   overflow-wrap: anywhere;
 }
 
-.chat-markdown > :first-child {
-  margin-top: 0;
-}
-
-.chat-markdown > :last-child {
-  margin-bottom: 0;
-}
-
-.chat-markdown p {
-  margin: 0.5em 0;
+.chat-markdown > * {
+  margin: 0;
 }
 
 .chat-markdown h1,
@@ -124,50 +457,69 @@
 .chat-markdown h4,
 .chat-markdown h5,
 .chat-markdown h6 {
-  margin: 0.75em 0 0.35em;
-  font-weight: 600;
-  line-height: 1.25;
+  font-family: var(--font-heading);
+  font-weight: 700;
+  line-height: 1.2;
   color: var(--foreground);
 }
 
 .chat-markdown h1 {
-  font-size: 1.25em;
+  font-size: 1.35rem;
+  margin-top: 0.75rem;
 }
-
 .chat-markdown h2 {
-  font-size: 1.15em;
+  font-size: 1.15rem;
+  margin-top: 1rem;
 }
-
 .chat-markdown h3 {
-  font-size: 1.05em;
+  font-size: 1.05rem;
+  margin-top: 0.75rem;
+}
+.chat-markdown h4,
+.chat-markdown h5,
+.chat-markdown h6 {
+  font-size: 0.875rem;
+  margin-top: 0.5rem;
+  color: var(--muted-foreground);
+}
+.chat-markdown > :first-child {
+  margin-top: 0;
 }
 
 .chat-markdown ul,
 .chat-markdown ol {
-  margin: 0.5em 0;
-  padding-left: 1.25em;
+  padding-left: 1.35em;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
 }
-
-.chat-markdown li {
-  margin: 0.2em 0;
+.chat-markdown ul {
+  list-style: disc;
 }
-
+.chat-markdown ol {
+  list-style: decimal;
+}
 .chat-markdown li > ul,
 .chat-markdown li > ol {
-  margin: 0.15em 0;
+  margin-top: 0.25rem;
+}
+.chat-markdown li::marker {
+  color: var(--faint);
 }
 
 .chat-markdown blockquote {
-  margin: 0.5em 0;
-  border-left: 3px solid var(--border);
-  padding-left: 0.75em;
+  padding: 0.25rem 0.75rem;
+  border-left: 3px solid var(--border-strong);
   color: var(--muted-foreground);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
 }
 
 .chat-markdown hr {
-  margin: 0.75em 0;
-  border: 0;
+  border: none;
   border-top: 1px solid var(--border);
+  margin: 0.5rem 0;
 }
 
 .chat-markdown a {
@@ -175,48 +527,50 @@
 }
 
 .chat-markdown code:not(pre code) {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 0.875em;
-  padding: 0.1em 0.35em;
-  border-radius: 0.3em;
-  background: color-mix(in srgb, var(--background) 65%, transparent);
-  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  font-size: 0.86em;
+  background: var(--muted);
+  padding: 1px 5px;
+  border-radius: 5px;
+  overflow-wrap: anywhere;
 }
 
 .chat-markdown pre.tm-code {
-  margin: 0.65em 0;
-  padding: 0.65em 0.75em;
+  padding: 0.75rem;
   overflow-x: auto;
-  border-radius: 0.65em;
+  border-radius: var(--radius);
   border: 1px solid var(--border);
-  font-size: 0.8em;
-  line-height: 1.45;
+  font-size: 0.75rem;
+  line-height: 1.55;
 }
 
 .chat-markdown table {
   display: block;
   width: 100%;
   max-width: 100%;
-  margin: 0.65em 0;
   overflow-x: auto;
   border-collapse: collapse;
-  font-size: 0.9em;
+  font-size: 0.8125rem;
 }
 
 .chat-markdown th,
 .chat-markdown td {
   border: 1px solid var(--border);
-  padding: 0.35em 0.55em;
+  padding: 0.35em 0.6em;
   text-align: left;
 }
 
 .chat-markdown th {
-  background: color-mix(in srgb, var(--muted) 80%, transparent);
+  background: var(--muted);
   font-weight: 600;
 }
 
 .chat-markdown img {
   max-width: 100%;
   height: auto;
-  border-radius: 0.5em;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+}
+
+.chat-markdown del {
+  color: var(--faint);
 }

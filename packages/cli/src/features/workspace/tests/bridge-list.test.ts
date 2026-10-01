@@ -33,6 +33,8 @@ describe("WorkspaceBridge.listSessions", () => {
         error: null,
         generateStream: null,
         machineOnline: true,
+        currentSession: null,
+        notice: null,
       }),
       listSessions: async () => listed,
     } satisfies Partial<WorkspaceBridge>);

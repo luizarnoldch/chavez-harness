@@ -2,11 +2,13 @@ import type {
   ChatGenerateProgressPhase,
   ChatGenerateToolCall,
   ChatMessageDto,
+  ChatMode,
   ChatSessionDto,
   ChatSessionWithMessagesDto,
+  PushOrigin,
   WsReply,
 } from "@chavez-harness/shared";
-import { ChavezWsClient } from "./ws/client.ts";
+import { ChavezWsClient, type ChavezWsClientOptions, type WsClientLike } from "./ws/client.ts";
 import { ensureHost } from "./ws/ensure-host.ts";
 
 export type LinkStatus = "disconnected" | "connected" | "synced";
@@ -18,6 +20,30 @@ export type GenerateStreamState = {
   draftTools: ChatGenerateToolCall[];
 };
 
+/** Mode / provider / model of the session currently open in the TUI (kept live from pushes). */
+export type CurrentSessionSettings = {
+  id: string;
+  mode: ChatMode;
+  provider: string;
+  model: string;
+};
+
+export type SessionSettingsPatch = {
+  mode?: ChatMode;
+  provider?: string;
+  model?: string;
+  title?: string | null;
+};
+
+export type SessionDeletedEvent = {
+  deletedId: string;
+  /** Session opened in its place (current session deleted remotely); null if none could be opened. */
+  nextId: string | null;
+  origin: PushOrigin | null;
+  /** True when this TUI issued the delete itself. */
+  local: boolean;
+};
+
 export type WorkspaceBridgeState = {
   status: LinkStatus;
   path: string;
@@ -26,15 +52,68 @@ export type WorkspaceBridgeState = {
   error: string | null;
   generateStream: GenerateStreamState | null;
   machineOnline: boolean;
+  currentSession: CurrentSessionSettings | null;
+  /** Transient message for the status bar (e.g. session deleted from the web). */
+  notice: string | null;
+};
+
+export type WorkspaceBridgeOptions = {
+  /** Socket client factory; tests inject a fake. */
+  createClient?: (options: ChavezWsClientOptions) => WsClientLike;
+  ensureHost?: () => Promise<unknown>;
+  /** Drop a remote generation that stopped reporting progress (default 60s). */
+  streamStaleMs?: number;
+  /** How long a status-bar notice stays visible (default 8s). */
+  noticeMs?: number;
 };
 
 type Listener = () => void;
+
+const STREAM_STALE_MS = 60_000;
+const NOTICE_MS = 8_000;
 
 function textFromParts(parts: ChatMessageDto["parts"]): string {
   return parts
     .filter((p): p is { type: "text"; text: string } => p.type === "text")
     .map((p) => p.text)
     .join("");
+}
+
+/** Same order as the server list: newest activity first, brand-new (never messaged) sessions on top. */
+export function compareSessionsForList(a: ChatSessionDto, b: ChatSessionDto): number {
+  if (a.lastMessageAt !== b.lastMessageAt) {
+    if (a.lastMessageAt == null) return -1;
+    if (b.lastMessageAt == null) return 1;
+    return b.lastMessageAt.localeCompare(a.lastMessageAt);
+  }
+  return b.createdAt.localeCompare(a.createdAt);
+}
+
+function originLabel(origin: PushOrigin | null | undefined): string {
+  if (origin === "web") return "la web";
+  if (origin === "tui") return "otro TUI";
+  if (origin === "api") return "la API";
+  return "otro cliente";
+}
+
+function sameSettings(
+  a: CurrentSessionSettings | null,
+  b: CurrentSessionSettings | null,
+): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return a.id === b.id && a.mode === b.mode && a.provider === b.provider && a.model === b.model;
+}
+
+/**
+ * True while a generation is in flight for the session, whoever started it (this TUI or the web).
+ * The prompt must not send in the meantime.
+ */
+export function isSessionGenerating(
+  state: Pick<WorkspaceBridgeState, "generateStream">,
+  sessionId: string | null | undefined,
+): boolean {
+  return Boolean(sessionId && state.generateStream?.sessionId === sessionId);
 }
 
 export function upsertDraftTool(
@@ -51,12 +130,23 @@ export function upsertDraftTool(
 }
 
 export class WorkspaceBridge {
-  private client: ChavezWsClient | null = null;
+  private client: WsClientLike | null = null;
   private listeners = new Set<Listener>();
   private messageListeners = new Set<(sessionId: string) => void>();
+  private sessionListeners = new Set<Listener>();
+  private deletedListeners = new Set<(event: SessionDeletedEvent) => void>();
   private sessions = new Map<string, ChatSessionWithMessagesDto>();
+  /** Sessions cached before the socket dropped; refetched in full when opened again. */
+  private staleSessions = new Set<string>();
+  private sessionsList: ChatSessionDto[] = [];
+  /** Deletes this TUI issued: their `session.deleted` echo must not trigger a replacement. */
+  private locallyDeleting = new Set<string>();
   private closing = false;
   private daemonRetryInFlight = false;
+  private resyncRunning = false;
+  private resyncQueued = false;
+  private streamTimer: ReturnType<typeof setTimeout> | null = null;
+  private noticeTimer: ReturnType<typeof setTimeout> | null = null;
   private state: WorkspaceBridgeState = {
     status: "disconnected",
     path: process.cwd(),
@@ -65,7 +155,11 @@ export class WorkspaceBridge {
     error: null,
     generateStream: null,
     machineOnline: false,
+    currentSession: null,
+    notice: null,
   };
+
+  constructor(private readonly options: WorkspaceBridgeOptions = {}) {}
 
   getState(): WorkspaceBridgeState {
     return this.state;
@@ -73,6 +167,11 @@ export class WorkspaceBridge {
 
   getSession(id: string): ChatSessionWithMessagesDto | undefined {
     return this.sessions.get(id);
+  }
+
+  /** Sessions of the workspace, kept live from `session.updated` / `session.deleted` pushes. */
+  getSessionsList(): ChatSessionDto[] {
+    return this.sessionsList;
   }
 
   subscribe(listener: Listener): () => void {
@@ -85,8 +184,24 @@ export class WorkspaceBridge {
     return () => this.messageListeners.delete(listener);
   }
 
+  /** Fires whenever {@link getSessionsList} changes. */
+  subscribeSessions(listener: Listener): () => void {
+    this.sessionListeners.add(listener);
+    return () => this.sessionListeners.delete(listener);
+  }
+
+  /** Fires after a session was deleted (by anyone); see {@link SessionDeletedEvent}. */
+  onSessionDeleted(listener: (event: SessionDeletedEvent) => void): () => void {
+    this.deletedListeners.add(listener);
+    return () => this.deletedListeners.delete(listener);
+  }
+
   private emit() {
     for (const listener of this.listeners) listener();
+  }
+
+  private emitSessions() {
+    for (const listener of this.sessionListeners) listener();
   }
 
   private setState(patch: Partial<WorkspaceBridgeState>) {
@@ -94,14 +209,86 @@ export class WorkspaceBridge {
     this.emit();
   }
 
-  private applyMessage(sessionId: string, message: ChatMessageDto) {
+  private notifyMessages(sessionId: string) {
+    for (const listener of this.messageListeners) listener(sessionId);
+  }
+
+  private createClient(options: ChavezWsClientOptions): WsClientLike {
+    return this.options.createClient
+      ? this.options.createClient(options)
+      : new ChavezWsClient(options);
+  }
+
+  // --- current session / cache -------------------------------------------------
+
+  private settingsFor(id: string | null): CurrentSessionSettings | null {
+    if (!id) return null;
+    const session = this.sessions.get(id);
+    if (!session) return null;
+    return { id, mode: session.mode, provider: session.provider, model: session.model };
+  }
+
+  private setCurrentSessionId(id: string | null) {
+    this.setState({ chatSessionId: id, currentSession: this.settingsFor(id) });
+  }
+
+  private refreshCurrentSettings() {
+    const next = this.settingsFor(this.state.chatSessionId);
+    if (!sameSettings(this.state.currentSession, next)) {
+      this.setState({ currentSession: next });
+    }
+  }
+
+  private cacheSession(session: ChatSessionWithMessagesDto) {
+    this.sessions.set(session.id, session);
+    this.staleSessions.delete(session.id);
+    const { messages: _messages, ...meta } = session;
+    this.upsertListed(meta);
+  }
+
+  private upsertListed(dto: ChatSessionDto) {
+    if (this.state.workspaceId && dto.workspaceId !== this.state.workspaceId) return;
+    const next = this.sessionsList.filter((s) => s.id !== dto.id);
+    next.push(dto);
+    next.sort(compareSessionsForList);
+    this.sessionsList = next;
+    this.emitSessions();
+  }
+
+  private removeListed(id: string) {
+    if (!this.sessionsList.some((s) => s.id === id)) return;
+    this.sessionsList = this.sessionsList.filter((s) => s.id !== id);
+    this.emitSessions();
+  }
+
+  /** Apply a session row (keeps cached messages) and refresh list + current settings. */
+  private applySessionDto(dto: ChatSessionDto) {
+    const cached = this.sessions.get(dto.id);
+    if (cached) this.sessions.set(dto.id, { ...cached, ...dto });
+    this.upsertListed(dto);
+    if (dto.id === this.state.chatSessionId) this.refreshCurrentSettings();
+  }
+
+  private applyMessage(sessionId: string, message: ChatMessageDto, sessionMeta?: ChatSessionDto) {
+    if (sessionMeta) this.applySessionDto(sessionMeta);
     const session = this.sessions.get(sessionId);
     if (!session) return;
     if (session.messages.some((m) => m.id === message.id)) return;
+
+    const lastSeq = session.messages.at(-1)?.seq ?? 0;
     const messages = [...session.messages, message].sort((a, b) => a.seq - b.seq);
     this.sessions.set(sessionId, { ...session, messages });
-    for (const listener of this.messageListeners) listener(sessionId);
+    this.notifyMessages(sessionId);
+
+    if (message.seq > lastSeq + 1) {
+      // Missed pushes in between: pull what is missing instead of trusting a holey cache.
+      void this.openSession(sessionId, lastSeq).catch(() => {
+        this.staleSessions.add(sessionId);
+      });
+    }
   }
+
+  // --- connect / reconnect ---------------------------------------------------------
 
   async connect(apiUrl: string, token: string, path = process.cwd()): Promise<void> {
     this.closing = false;
@@ -109,28 +296,32 @@ export class WorkspaceBridge {
     this.setState({ path, status: "disconnected", error: null, machineOnline: false });
 
     this.client?.close();
-    this.client = new ChavezWsClient({
+    const client: WsClientLike = this.createClient({
       apiUrl,
       token,
       autoReconnect: true,
       onPush: (message) => this.handlePush(message),
+      onOpen: (info) => this.handleSocketOpen(client, info),
+      onClose: () => this.handleSocketClosed(client),
     });
+    this.client = client;
 
-    await this.client.connect();
+    await client.connect();
 
     try {
-      await ensureHost();
+      await (this.options.ensureHost ?? ensureHost)();
     } catch (err) {
       this.setState({
         error: err instanceof Error ? err.message : "Host no arrancó",
       });
     }
 
-    const bind = await this.client.request<{ workspaceId: string }>({
+    const bind = await client.request<{ workspaceId: string }>({
       type: "workspace.bind",
       id: crypto.randomUUID(),
       path,
       clientKind: "client",
+      clientLabel: "tui",
     });
 
     if (!bind.ok || !bind.data?.workspaceId) {
@@ -158,9 +349,9 @@ export class WorkspaceBridge {
     }
 
     const opened = await this.openLatestOrCreate();
-    this.setState({ chatSessionId: opened.id });
+    this.setCurrentSessionId(opened.id);
 
-    const sync = await this.client.request<{
+    const sync = await client.request<{
       daemonStatus: "online" | "offline" | "stale";
       machineStatus?: "online" | "offline";
     }>({
@@ -177,6 +368,94 @@ export class WorkspaceBridge {
       status: machineOnline && daemonOnline ? "synced" : "connected",
       ...(daemonOnline ? { error: null } : {}),
     });
+  }
+
+  private handleSocketClosed(client: WsClientLike) {
+    if (this.closing || client !== this.client) return;
+    // Pushes are lost while offline: cached sessions can no longer be trusted as-is.
+    this.staleSessions = new Set(this.sessions.keys());
+    this.clearStreamTimer();
+    this.setState({ status: "disconnected", machineOnline: false, generateStream: null });
+  }
+
+  private async handleSocketOpen(client: WsClientLike, info: { reconnect: boolean }) {
+    if (!info.reconnect || this.closing || client !== this.client) return;
+    if (this.resyncRunning) {
+      this.resyncQueued = true;
+      return;
+    }
+    this.resyncRunning = true;
+    try {
+      do {
+        this.resyncQueued = false;
+        await this.resync(client);
+      } while (this.resyncQueued && !this.closing);
+    } finally {
+      this.resyncRunning = false;
+    }
+  }
+
+  /** After a reconnect: bind again, sync presence, then catch up the open session. */
+  private async resync(client: WsClientLike) {
+    try {
+      const bind = await client.request<{ workspaceId: string }>({
+        type: "workspace.bind",
+        id: crypto.randomUUID(),
+        path: this.state.path,
+        clientKind: "client",
+        clientLabel: "tui",
+      });
+      if (!bind.ok || !bind.data?.workspaceId) {
+        this.setState({ error: bind.error ?? "Bind falló" });
+        return;
+      }
+      const workspaceId = bind.data.workspaceId;
+      this.setState({ workspaceId, status: "connected", error: null });
+
+      const currentId = this.state.chatSessionId;
+      const sync = await client.request<{
+        daemonStatus: "online" | "offline" | "stale";
+        machineStatus?: "online" | "offline";
+      }>({
+        type: "workspace.sync",
+        id: crypto.randomUUID(),
+        workspaceId,
+        ...(currentId ? { chatSessionId: currentId } : {}),
+      });
+      const machineOnline = sync.data?.machineStatus === "online";
+      const daemonOnline = sync.ok && sync.data?.daemonStatus === "online";
+      this.setState({
+        machineOnline,
+        status: machineOnline && daemonOnline ? "synced" : "connected",
+      });
+
+      if (currentId && this.sessions.has(currentId)) {
+        await this.catchUpSession(currentId);
+      }
+      if (machineOnline && !daemonOnline) {
+        void this.retryDaemonSetOnHostOnline();
+      }
+    } catch (err) {
+      this.setState({
+        error: err instanceof Error ? err.message : "No se pudo resincronizar",
+      });
+    }
+  }
+
+  /** Pull messages missed while offline (`session.open {afterSeq}`) and merge them into the cache. */
+  private async catchUpSession(sessionId: string) {
+    const cached = this.sessions.get(sessionId);
+    if (!cached) return;
+    try {
+      await this.openSession(sessionId, cached.messages.at(-1)?.seq ?? 0);
+    } catch (err) {
+      if (err instanceof Error && err.message === SESSION_NOT_FOUND) {
+        // Deleted while we were offline.
+        this.handleSessionDeleted(sessionId, null);
+        return;
+      }
+      throw err;
+    }
   }
 
   private async waitForHostOnline(timeoutMs: number): Promise<boolean> {
@@ -253,6 +532,8 @@ export class WorkspaceBridge {
     }
   }
 
+  // --- pushes ----------------------------------------------------------------------
+
   private handlePush(message: Record<string, unknown>) {
     if (message.type === "machine.presence") {
       const data = message.data as { status?: string } | undefined;
@@ -307,19 +588,41 @@ export class WorkspaceBridge {
     if (message.type === "session.message.created") {
       const data = message.data as
         | {
-            session?: { id: string };
+            session?: ChatSessionDto;
             message?: ChatMessageDto;
           }
         | undefined;
       if (data?.session?.id && data.message) {
-        this.applyMessage(data.session.id, data.message);
+        this.applyMessage(data.session.id, data.message, data.session);
         if (
           data.message.role === "assistant" &&
           this.state.generateStream?.sessionId === data.session.id
         ) {
-          this.setState({ generateStream: null });
+          this.clearGenerateStream();
         }
       }
+      return;
+    }
+
+    if (message.type === "session.updated") {
+      const data = message.data as ChatSessionDto | undefined;
+      if (!data?.id) return;
+      if (this.state.workspaceId && data.workspaceId !== this.state.workspaceId) return;
+      this.applySessionDto(data);
+      if (message.change === "message" && this.state.generateStream?.sessionId === data.id) {
+        this.clearGenerateStream();
+      }
+      return;
+    }
+
+    if (message.type === "session.deleted") {
+      const data = message.data as { workspaceId?: string; chatSessionId?: string } | undefined;
+      if (!data?.chatSessionId) return;
+      if (this.state.workspaceId && data.workspaceId !== this.state.workspaceId) return;
+      this.handleSessionDeleted(
+        data.chatSessionId,
+        (message.origin as PushOrigin | undefined) ?? null,
+      );
       return;
     }
 
@@ -353,14 +656,87 @@ export class WorkspaceBridge {
           draftTools,
         },
       });
+      this.armStreamTimer();
     }
   }
 
+  private handleSessionDeleted(id: string, origin: PushOrigin | null) {
+    const wasCurrent = this.state.chatSessionId === id;
+    const local = this.locallyDeleting.has(id);
+    this.sessions.delete(id);
+    this.staleSessions.delete(id);
+    this.removeListed(id);
+    if (this.state.generateStream?.sessionId === id) this.clearGenerateStream();
+
+    if (!wasCurrent) return;
+    // `deleteSession()` resets the current session and its caller navigates away.
+    if (local) return;
+    void this.replaceDeletedCurrent(id, origin);
+  }
+
+  private async replaceDeletedCurrent(deletedId: string, origin: PushOrigin | null) {
+    const label = shortId(deletedId);
+    this.setCurrentSessionId(null);
+    this.setNotice(`Conversación ${label} eliminada desde ${originLabel(origin)} · abriendo otra…`);
+    let nextId: string | null = null;
+    try {
+      const next = await this.openLatestOrCreate();
+      nextId = next.id;
+      this.setNotice(
+        `Conversación ${label} eliminada desde ${originLabel(origin)} · ahora en ${shortId(next.id)}`,
+      );
+    } catch {
+      this.setNotice(
+        `Conversación ${label} eliminada desde ${originLabel(origin)} · no se pudo abrir otra`,
+      );
+    }
+    for (const listener of this.deletedListeners) {
+      listener({ deletedId, nextId, origin, local: false });
+    }
+  }
+
+  // --- generate stream / notice -----------------------------------------------------
+
+  private clearStreamTimer() {
+    if (this.streamTimer) {
+      clearTimeout(this.streamTimer);
+      this.streamTimer = null;
+    }
+  }
+
+  /** A remote generation that goes silent must not block the prompt forever. */
+  private armStreamTimer() {
+    this.clearStreamTimer();
+    this.streamTimer = setTimeout(
+      () => this.clearGenerateStream(),
+      this.options.streamStaleMs ?? STREAM_STALE_MS,
+    );
+    this.streamTimer.unref?.();
+  }
+
   clearGenerateStream() {
+    this.clearStreamTimer();
     if (this.state.generateStream) {
       this.setState({ generateStream: null });
     }
   }
+
+  private setNotice(text: string) {
+    if (this.noticeTimer) clearTimeout(this.noticeTimer);
+    this.setState({ notice: text });
+    this.noticeTimer = setTimeout(() => this.clearNotice(), this.options.noticeMs ?? NOTICE_MS);
+    this.noticeTimer.unref?.();
+  }
+
+  clearNotice() {
+    if (this.noticeTimer) {
+      clearTimeout(this.noticeTimer);
+      this.noticeTimer = null;
+    }
+    if (this.state.notice) this.setState({ notice: null });
+  }
+
+  // --- requests ---------------------------------------------------------------------
 
   async openLatestOrCreate(): Promise<ChatSessionWithMessagesDto> {
     if (!this.client || !this.state.workspaceId) {
@@ -374,8 +750,8 @@ export class WorkspaceBridge {
     if (!reply.ok || !reply.data) {
       throw new Error(reply.error ?? "No se pudo abrir la sesión");
     }
-    this.sessions.set(reply.data.id, reply.data);
-    this.setState({ chatSessionId: reply.data.id });
+    this.cacheSession(reply.data);
+    this.setCurrentSessionId(reply.data.id);
     return reply.data;
   }
 
@@ -407,8 +783,8 @@ export class WorkspaceBridge {
     if (!opened.ok || !opened.data) {
       throw new Error(opened.error ?? "No se pudo abrir la sesión nueva");
     }
-    this.sessions.set(opened.data.id, opened.data);
-    this.setState({ chatSessionId: opened.data.id });
+    this.cacheSession(opened.data);
+    this.setCurrentSessionId(opened.data.id);
     return opened.data;
   }
 
@@ -424,30 +800,43 @@ export class WorkspaceBridge {
     if (!reply.ok || !reply.data?.sessions) {
       throw new Error(reply.error ?? "No se pudieron listar las sesiones");
     }
-    return reply.data.sessions;
+    this.sessionsList = [...reply.data.sessions].sort(compareSessionsForList);
+    this.emitSessions();
+    return this.sessionsList;
   }
 
   async deleteSession(chatSessionId: string): Promise<void> {
     if (!this.client || !this.state.workspaceId) {
       throw new Error("Workspace no conectado");
     }
-    const reply = await this.client.request<{
-      workspaceId: string;
-      chatSessionId: string;
-    }>({
-      type: "session.delete",
-      id: crypto.randomUUID(),
-      chatSessionId,
-    });
-    if (!reply.ok) {
-      throw new Error(reply.error ?? "No se pudo eliminar la sesión");
+    this.locallyDeleting.add(chatSessionId);
+    try {
+      const reply = await this.client.request<{
+        workspaceId: string;
+        chatSessionId: string;
+      }>({
+        type: "session.delete",
+        id: crypto.randomUUID(),
+        chatSessionId,
+      });
+      if (!reply.ok) {
+        throw new Error(reply.error ?? "No se pudo eliminar la sesión");
+      }
+    } finally {
+      this.locallyDeleting.delete(chatSessionId);
     }
     this.sessions.delete(chatSessionId);
+    this.staleSessions.delete(chatSessionId);
+    this.removeListed(chatSessionId);
     if (this.state.chatSessionId === chatSessionId) {
-      this.setState({ chatSessionId: null });
+      this.setCurrentSessionId(null);
     }
   }
 
+  /**
+   * Open a session. A cached session kept fresh by pushes is served from the cache;
+   * with `afterSeq` only the missing tail is fetched and merged into the cache.
+   */
   async openSession(
     chatSessionId: string,
     afterSeq?: number,
@@ -455,34 +844,60 @@ export class WorkspaceBridge {
     if (!this.client || !this.state.workspaceId) {
       throw new Error("Workspace no conectado");
     }
+    const existing = this.sessions.get(chatSessionId);
+
+    if (afterSeq == null && existing && !this.staleSessions.has(chatSessionId)) {
+      this.setCurrentSessionId(chatSessionId);
+      return existing;
+    }
+
+    const tailOnly = afterSeq != null && existing != null;
     const reply = await this.client.request<ChatSessionWithMessagesDto>({
       type: "session.open",
       id: crypto.randomUUID(),
       workspaceId: this.state.workspaceId,
       chatSessionId,
-      afterSeq,
+      ...(tailOnly ? { afterSeq } : {}),
     });
     if (!reply.ok || !reply.data) {
-      throw new Error(reply.error ?? "Sesión no encontrada");
+      throw new Error(reply.error ?? SESSION_NOT_FOUND);
     }
 
-    if (afterSeq != null) {
-      const existing = this.sessions.get(chatSessionId);
-      if (existing) {
-        const byId = new Map(existing.messages.map((m) => [m.id, m]));
-        for (const m of reply.data.messages) byId.set(m.id, m);
-        const merged = {
-          ...reply.data,
-          messages: [...byId.values()].sort((a, b) => a.seq - b.seq),
-        };
-        this.sessions.set(chatSessionId, merged);
-        return merged;
-      }
+    if (tailOnly && existing) {
+      const byId = new Map(existing.messages.map((m) => [m.id, m]));
+      for (const m of reply.data.messages) byId.set(m.id, m);
+      const merged = {
+        ...reply.data,
+        messages: [...byId.values()].sort((a, b) => a.seq - b.seq),
+      };
+      this.cacheSession(merged);
+      if (chatSessionId === this.state.chatSessionId) this.refreshCurrentSettings();
+      this.notifyMessages(chatSessionId);
+      return merged;
     }
 
-    this.sessions.set(reply.data.id, reply.data);
-    this.setState({ chatSessionId: reply.data.id });
+    this.cacheSession(reply.data);
+    this.setCurrentSessionId(reply.data.id);
     return reply.data;
+  }
+
+  /** Persist Plan/Build, provider/model or title; the reply updates cache, list and current settings. */
+  async updateSession(
+    chatSessionId: string,
+    patch: SessionSettingsPatch,
+  ): Promise<ChatSessionDto> {
+    if (!this.client) throw new Error("Workspace no conectado");
+    const reply = await this.client.request<{ session: ChatSessionDto; changed: string[] }>({
+      type: "session.update",
+      id: crypto.randomUUID(),
+      chatSessionId,
+      ...patch,
+    });
+    if (!reply.ok || !reply.data?.session) {
+      throw new Error(reply.error ?? "No se pudo actualizar la sesión");
+    }
+    this.applySessionDto(reply.data.session);
+    return reply.data.session;
   }
 
   async sendMessage(input: {
@@ -515,12 +930,13 @@ export class WorkspaceBridge {
         if (!messages.some((x) => x.id === m.id)) messages.push(m);
       }
       messages.sort((a, b) => a.seq - b.seq);
-      this.sessions.set(input.chatSessionId, {
+      this.cacheSession({
         ...reply.data.session,
         messages,
       });
-      this.setState({ generateStream: null });
-      for (const listener of this.messageListeners) listener(input.chatSessionId);
+      this.refreshCurrentSettings();
+      this.clearGenerateStream();
+      this.notifyMessages(input.chatSessionId);
     }
 
     return reply;
@@ -529,6 +945,11 @@ export class WorkspaceBridge {
   async close(): Promise<void> {
     if (this.closing) return;
     this.closing = true;
+    this.clearStreamTimer();
+    if (this.noticeTimer) {
+      clearTimeout(this.noticeTimer);
+      this.noticeTimer = null;
+    }
     const workspaceId = this.state.workspaceId;
     const client = this.client;
 
@@ -552,8 +973,15 @@ export class WorkspaceBridge {
       status: "disconnected",
       workspaceId: null,
       machineOnline: false,
+      notice: null,
     });
   }
+}
+
+const SESSION_NOT_FOUND = "Sesión no encontrada";
+
+function shortId(id: string): string {
+  return id.slice(0, 8);
 }
 
 export function messageToTurnText(message: ChatMessageDto): string {

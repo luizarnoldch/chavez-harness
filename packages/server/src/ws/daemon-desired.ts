@@ -7,6 +7,7 @@ import {
   type WorkspaceDto,
 } from "@chavez-harness/shared";
 import type { WorkspaceService } from "../services/chat.ts";
+import { emitWorkspaceUpdated } from "./emit.ts";
 import type { Hub } from "./hub.ts";
 import type { PendingRegistry } from "./pending.ts";
 
@@ -43,6 +44,8 @@ export async function applyDaemonDesired(args: {
       daemonStatus: hub.findDaemon(userId, workspaceId) ? "online" : "offline",
     };
   }
+
+  emitWorkspaceUpdated(hub, userId, workspace, "daemon.desired", source);
 
   const host = hub.findHost(userId);
   if (!host) {

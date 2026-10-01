@@ -16,6 +16,16 @@ import type { ProviderCredentialsService } from "../services/providers.ts";
 import type { ProviderJobStore } from "../services/provider-jobs.ts";
 import { assignClientRole, assignDaemonRole, assignHostRole } from "./bind-role.ts";
 import { applyDaemonDesired, reconcileDesiredDaemons } from "./daemon-desired.ts";
+import {
+  connectionsFor,
+  daemonStatusFor,
+  emitConnectionStatus,
+  emitMessageCreated,
+  emitSessionDeleted,
+  emitSessionUpdated,
+  emitWorkspaceUpdated,
+  originOf,
+} from "./emit.ts";
 import type { Hub, HubConnection } from "./hub.ts";
 import type { HeartbeatSweeper } from "./heartbeat.ts";
 import type { PendingRegistry } from "./pending.ts";
@@ -26,57 +36,6 @@ function noDaemonOrHostError(hub: Hub, userId: string): string {
 
 function reply(type: string, id: string, ok: boolean, data?: unknown, error?: string): WsReply {
   return { type, id, ok, data, error };
-}
-
-function daemonStatusFor(
-  hub: Hub,
-  userId: string,
-  workspaceId: string,
-): "online" | "offline" | "stale" {
-  const daemon = hub.findDaemon(userId, workspaceId);
-  return daemon ? "online" : "offline";
-}
-
-function connectionsFor(
-  hub: Hub,
-  userId: string,
-  workspaceId: string,
-): Array<{
-  connectionId: string;
-  clientKind: HubConnection["clientKind"];
-  role: HubConnection["role"];
-}> {
-  return hub.listForWorkspace(userId, workspaceId).map((c) => ({
-    connectionId: c.connectionId,
-    clientKind: c.clientKind,
-    role: c.role,
-  }));
-}
-
-function emitConnectionStatus(
-  hub: Hub,
-  userId: string,
-  workspaceId: string,
-  path: string,
-  exceptConnectionId?: string,
-) {
-  hub.broadcastToWorkspace(
-    userId,
-    workspaceId,
-    {
-      push: true,
-      eventId: crypto.randomUUID(),
-      type: "connection.status",
-      data: {
-        linked: true,
-        workspaceId,
-        path,
-        daemon: daemonStatusFor(hub, userId, workspaceId),
-        connections: connectionsFor(hub, userId, workspaceId),
-      },
-    },
-    exceptConnectionId,
-  );
 }
 
 function emitMachinePresence(
@@ -103,29 +62,6 @@ function emitMachinePresence(
     },
     exceptConnectionId,
   );
-}
-
-function emitMessages(
-  hub: Hub,
-  userId: string,
-  workspaceId: string,
-  session: unknown,
-  messages: unknown[],
-  exceptConnectionId?: string,
-) {
-  for (const message of messages) {
-    hub.broadcastToWorkspace(
-      userId,
-      workspaceId,
-      {
-        push: true,
-        eventId: crypto.randomUUID(),
-        type: "session.message.created",
-        data: { workspaceId, session, message },
-      },
-      exceptConnectionId,
-    );
-  }
 }
 
 export type HandlerDeps = {
@@ -204,6 +140,18 @@ export async function handleWsMessage(
         return;
       }
 
+      case "user.subscribe": {
+        hub.update(conn.connectionId, { observeUser: true });
+        hub.sendTo(
+          conn.connectionId,
+          reply("user.subscribe", msg.id, true, {
+            subscribed: true as const,
+            machineStatus: hub.machineStatus(conn.userId),
+          }),
+        );
+        return;
+      }
+
       case "workspace.bind": {
         const ws = await workspaces.upsertByPath(conn.userId, msg.path);
         hub.update(conn.connectionId, {
@@ -231,18 +179,26 @@ export async function handleWsMessage(
             connectionId: conn.connectionId,
             role,
           });
-          emitConnectionStatus(hub, conn.userId, ws.id, msg.path);
+          emitConnectionStatus(hub, conn.userId, ws.id, msg.path, {
+            daemonDesired: ws.daemonDesired,
+          });
         } else {
-          assignClientRole(hub, conn.connectionId);
+          assignClientRole(hub, conn.connectionId, msg.clientLabel ?? null);
           hub.sendTo(
             conn.connectionId,
             reply("workspace.bind", msg.id, true, {
               workspaceId: ws.id,
               path: msg.path,
               clientKind: "client",
+              ...(msg.clientLabel ? { clientLabel: msg.clientLabel } : {}),
             }),
           );
-          emitConnectionStatus(hub, conn.userId, ws.id, msg.path);
+          emitConnectionStatus(hub, conn.userId, ws.id, msg.path, {
+            daemonDesired: ws.daemonDesired,
+          });
+          if (msg.clientLabel === "tui") {
+            emitWorkspaceUpdated(hub, conn.userId, ws, "bind", "tui", conn.connectionId);
+          }
         }
         return;
       }
@@ -270,7 +226,9 @@ export async function handleWsMessage(
           desired: msg.desired,
           source: msg.source,
         });
-        emitConnectionStatus(hub, conn.userId, outcome.workspace.id, outcome.workspace.path);
+        emitConnectionStatus(hub, conn.userId, outcome.workspace.id, outcome.workspace.path, {
+          daemonDesired: outcome.workspace.daemonDesired,
+        });
         hub.sendTo(
           conn.connectionId,
           reply("workspace.daemon.set", msg.id, true, {
@@ -431,17 +389,35 @@ export async function handleWsMessage(
           provider: msg.provider,
           model: msg.model,
         });
-        hub.broadcastToWorkspace(conn.userId, msg.workspaceId, {
-          push: true,
-          eventId: crypto.randomUUID(),
-          type: "session.updated",
-          data: created,
+        emitSessionUpdated(hub, conn.userId, created, {
+          origin: originOf(conn),
+          change: "created",
         });
         hub.sendTo(conn.connectionId, reply("session.create", msg.id, true, created));
         return;
       }
 
+      case "session.update": {
+        const { session, changed } = await chat.updateSession(conn.userId, msg.chatSessionId, {
+          mode: msg.mode,
+          provider: msg.provider,
+          model: msg.model,
+          title: msg.title,
+        });
+        if (changed.length > 0) {
+          emitSessionUpdated(hub, conn.userId, session, {
+            origin: originOf(conn),
+            change: "settings",
+            changed,
+            exceptConnectionId: conn.connectionId,
+          });
+        }
+        hub.sendTo(conn.connectionId, reply("session.update", msg.id, true, { session, changed }));
+        return;
+      }
+
       case "chat.send": {
+        const origin = originOf(conn);
         const sendResult = await chat.sendMessage({
           chatSessionId: msg.chatSessionId,
           userId: conn.userId,
@@ -451,12 +427,13 @@ export async function handleWsMessage(
           model: msg.model,
           clientMessageId: msg.clientMessageId,
           onUserMessagePersisted: async ({ session, userMessage, workspaceId }) => {
-            emitMessages(
+            emitMessageCreated(
               hub,
               conn.userId,
               workspaceId,
               session,
-              [userMessage],
+              userMessage,
+              origin,
               conn.connectionId,
             );
           },
@@ -479,25 +456,20 @@ export async function handleWsMessage(
         });
 
         if (sendResult.created) {
-          emitMessages(
+          emitMessageCreated(
             hub,
             conn.userId,
             sendResult.session.workspaceId,
             sendResult.session,
-            [sendResult.assistantMessage],
+            sendResult.assistantMessage,
+            origin,
             conn.connectionId,
           );
-          hub.broadcastToWorkspace(
-            conn.userId,
-            sendResult.session.workspaceId,
-            {
-              push: true,
-              eventId: crypto.randomUUID(),
-              type: "session.updated",
-              data: sendResult.session,
-            },
-            conn.connectionId,
-          );
+          emitSessionUpdated(hub, conn.userId, sendResult.session, {
+            origin,
+            change: "message",
+            exceptConnectionId: conn.connectionId,
+          });
         }
 
         hub.sendTo(conn.connectionId, reply("chat.send", msg.id, true, sendResult));
@@ -506,15 +478,7 @@ export async function handleWsMessage(
 
       case "session.delete": {
         const deleted = await chat.deleteSession(conn.userId, msg.chatSessionId);
-        hub.broadcastToWorkspace(conn.userId, deleted.workspaceId, {
-          push: true,
-          eventId: crypto.randomUUID(),
-          type: "session.deleted",
-          data: {
-            workspaceId: deleted.workspaceId,
-            chatSessionId: deleted.sessionId,
-          },
-        });
+        emitSessionDeleted(hub, conn.userId, deleted, originOf(conn));
         hub.sendTo(
           conn.connectionId,
           reply("session.delete", msg.id, true, {

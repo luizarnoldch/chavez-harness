@@ -6,9 +6,11 @@ import {
   type ChatMode,
   type ChatSessionDto,
   type ChatSessionWithMessagesDto,
+  type DashboardSession,
+  type SessionSettingKey,
   type WorkspaceDto,
 } from "@chavez-harness/shared";
-import { and, asc, desc, eq, gt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, sql } from "drizzle-orm";
 import { chatMessage, chatSession, workspace } from "../db/chat/schema.ts";
 import type { Db } from "../lib/db.ts";
 
@@ -244,12 +246,49 @@ export function createChatService(db: Db) {
     return { session: row.session, workspace: mapWorkspace(row.workspace) };
   }
 
-  async function nextSeq(chatSessionId: string): Promise<number> {
-    const [row] = await db
-      .select({ maxSeq: sql<number>`coalesce(max(${chatMessage.seq}), 0)` })
-      .from(chatMessage)
-      .where(eq(chatMessage.chatSessionId, chatSessionId));
-    return Number(row?.maxSeq ?? 0) + 1;
+  /**
+   * Insert a message with the next `seq` and patch the session row in one transaction.
+   * The `chat_session` row lock serializes concurrent senders (TUI + web) so `seq` never collides.
+   */
+  async function appendMessage(
+    chatSessionId: string,
+    message: Omit<typeof chatMessage.$inferInsert, "chatSessionId" | "seq">,
+    sessionPatch: Partial<typeof chatSession.$inferInsert>,
+  ): Promise<{
+    message: typeof chatMessage.$inferSelect;
+    session: typeof chatSession.$inferSelect;
+  }> {
+    return db.transaction(async (tx) => {
+      await tx
+        .select({ id: chatSession.id })
+        .from(chatSession)
+        .where(eq(chatSession.id, chatSessionId))
+        .for("update");
+
+      const [maxRow] = await tx
+        .select({ maxSeq: sql<number>`coalesce(max(${chatMessage.seq}), 0)` })
+        .from(chatMessage)
+        .where(eq(chatMessage.chatSessionId, chatSessionId));
+      const seq = Number(maxRow?.maxSeq ?? 0) + 1;
+
+      const [inserted] = await tx
+        .insert(chatMessage)
+        .values({ ...message, chatSessionId, seq })
+        .returning();
+      if (!inserted) {
+        throw new Error("Failed to insert chat message");
+      }
+
+      const [updated] = await tx
+        .update(chatSession)
+        .set(sessionPatch)
+        .where(eq(chatSession.id, chatSessionId))
+        .returning();
+      if (!updated) {
+        throw new ChatNotFoundError("Sesión no encontrada");
+      }
+      return { message: inserted, session: updated };
+    });
   }
 
   return {
@@ -380,11 +419,10 @@ export function createChatService(db: Db) {
         }
       }
 
-      const userSeq = await nextSeq(input.chatSessionId);
-      const [userRow] = await db
-        .insert(chatMessage)
-        .values({
-          chatSessionId: input.chatSessionId,
+      const userTime = new Date();
+      const { message: userRow, session: sessionAfterUser } = await appendMessage(
+        input.chatSessionId,
+        {
           role: "user",
           mode: input.mode,
           provider,
@@ -392,19 +430,21 @@ export function createChatService(db: Db) {
           status: "done",
           parts: [{ type: "text", text: input.text }],
           clientMessageId: input.clientMessageId ?? null,
-          seq: userSeq,
-        })
-        .returning();
+        },
+        {
+          mode: input.mode,
+          provider,
+          model,
+          lastMessageAt: userTime,
+          updatedAt: userTime,
+          title: session.title ?? input.text.slice(0, 80),
+        },
+      );
 
-      if (!userRow) {
-        throw new Error("Failed to insert user message");
-      }
-
-      const mappedSession = mapSession(session);
       const mappedUser = mapMessage(userRow);
       if (input.onUserMessagePersisted) {
         await input.onUserMessagePersisted({
-          session: mappedSession,
+          session: mapSession(sessionAfterUser),
           userMessage: mappedUser,
           workspaceId: ws.id,
         });
@@ -449,11 +489,10 @@ export function createChatService(db: Db) {
         assistantError = err instanceof Error ? err.message : REPLY_ERROR_TEXT;
       }
 
-      const assistantSeq = userSeq + 1;
-      const [assistantRow] = await db
-        .insert(chatMessage)
-        .values({
-          chatSessionId: input.chatSessionId,
+      const assistantTime = new Date();
+      const { message: assistantRow, session: updatedSession } = await appendMessage(
+        input.chatSessionId,
+        {
           role: "assistant",
           mode: input.mode,
           provider,
@@ -462,35 +501,111 @@ export function createChatService(db: Db) {
           error: assistantError,
           parts: assistantParts,
           usage: assistantUsage,
-          seq: assistantSeq,
-        })
-        .returning();
-
-      if (!assistantRow) {
-        throw new Error("Failed to insert assistant message");
-      }
-
-      const now = new Date();
-      const [updatedSession] = await db
-        .update(chatSession)
-        .set({
-          mode: input.mode,
-          provider,
-          model,
-          lastMessageAt: now,
-          updatedAt: now,
-          title: session.title ?? input.text.slice(0, 80),
-        })
-        .where(eq(chatSession.id, input.chatSessionId))
-        .returning();
+        },
+        { lastMessageAt: assistantTime, updatedAt: assistantTime },
+      );
 
       await workspaces.touch(ws.id);
 
       return {
-        session: mapSession(updatedSession ?? session),
-        userMessage: mapMessage(userRow),
+        session: mapSession(updatedSession),
+        userMessage: mappedUser,
         assistantMessage: mapMessage(assistantRow),
         created: true,
+      };
+    },
+
+    async updateSession(
+      userId: string,
+      sessionId: string,
+      patch: {
+        mode?: ChatMode;
+        provider?: string;
+        model?: string;
+        title?: string | null;
+      },
+    ): Promise<{ session: ChatSessionDto; changed: SessionSettingKey[] }> {
+      const { session } = await assertSessionOwned(userId, sessionId);
+      const changed: SessionSettingKey[] = [];
+      const set: Partial<typeof chatSession.$inferInsert> = {};
+
+      if (patch.mode !== undefined && patch.mode !== session.mode) {
+        set.mode = patch.mode;
+        changed.push("mode");
+      }
+      if (patch.provider !== undefined && patch.provider !== session.provider) {
+        set.provider = patch.provider;
+        changed.push("provider");
+      }
+      if (patch.model !== undefined && patch.model !== session.model) {
+        set.model = patch.model;
+        changed.push("model");
+      }
+      if (patch.title !== undefined) {
+        const title = patch.title?.trim() ? patch.title.trim() : null;
+        if (title !== session.title) {
+          set.title = title;
+          changed.push("title");
+        }
+      }
+
+      if (changed.length === 0) {
+        return { session: mapSession(session), changed };
+      }
+
+      const [row] = await db
+        .update(chatSession)
+        .set({ ...set, updatedAt: new Date() })
+        .where(eq(chatSession.id, sessionId))
+        .returning();
+      return { session: mapSession(row ?? session), changed };
+    },
+
+    /** Cross-workspace numbers for `GET /api/dashboard`. */
+    async getDashboardStats(
+      userId: string,
+      options: { limit: number; since: Date },
+    ): Promise<{
+      sessionCountByWorkspace: Record<string, number>;
+      recentSessions: DashboardSession[];
+      sessionsToday: number;
+    }> {
+      const lastActivity = sql`coalesce(${chatSession.lastMessageAt}, ${chatSession.createdAt})`;
+      const owned = eq(workspace.userId, userId);
+
+      const counts = await db
+        .select({
+          workspaceId: chatSession.workspaceId,
+          count: sql<number>`count(*)::int`,
+        })
+        .from(chatSession)
+        .innerJoin(workspace, eq(chatSession.workspaceId, workspace.id))
+        .where(owned)
+        .groupBy(chatSession.workspaceId);
+
+      const recent = await db
+        .select({ session: chatSession, workspacePath: workspace.path })
+        .from(chatSession)
+        .innerJoin(workspace, eq(chatSession.workspaceId, workspace.id))
+        .where(owned)
+        .orderBy(desc(lastActivity))
+        .limit(options.limit);
+
+      const [today] = await db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(chatSession)
+        .innerJoin(workspace, eq(chatSession.workspaceId, workspace.id))
+        .where(and(owned, gte(lastActivity, options.since)));
+
+      return {
+        sessionCountByWorkspace: Object.fromEntries(
+          counts.map((row) => [row.workspaceId, Number(row.count)]),
+        ),
+        recentSessions: recent.map((row) => ({
+          ...mapSession(row.session),
+          workspacePath: row.workspacePath,
+        })),
+        sessionsToday: Number(today?.count ?? 0),
       };
     },
 

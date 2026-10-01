@@ -20,7 +20,7 @@ type SignUpFormProps = {
   redirectTo?: string;
 };
 
-export function SignUpForm({ redirectTo = "/workspaces" }: SignUpFormProps) {
+export function SignUpForm({ redirectTo = "/" }: SignUpFormProps) {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -50,9 +50,9 @@ export function SignUpForm({ redirectTo = "/workspaces" }: SignUpFormProps) {
   }
 
   return (
-    <Card className="w-full border-border/80 bg-card/90 shadow-none">
+    <Card className="w-full rounded-xl bg-card shadow-[var(--shadow-md)] ring-border">
       <CardHeader className="gap-1 px-5 pt-6 pb-2 sm:px-6">
-        <CardTitle className="text-xl font-semibold tracking-tight">
+        <CardTitle className="font-heading text-xl font-bold tracking-tight">
           Crear cuenta
         </CardTitle>
         <CardDescription className="text-muted-foreground text-sm leading-relaxed">
@@ -101,7 +101,7 @@ export function SignUpForm({ redirectTo = "/workspaces" }: SignUpFormProps) {
             <p className="text-muted-foreground text-xs">Mínimo 8 caracteres.</p>
           </div>
         </CardContent>
-        <CardFooter className="flex flex-col gap-3 px-5 pt-2 pb-6 sm:px-6">
+        <CardFooter className="flex flex-col gap-3 border-t-0 bg-transparent px-5 pt-2 pb-6 sm:px-6">
           <Button type="submit" className="h-11 w-full text-base" disabled={pending}>
             {pending ? "Creando…" : "Registrarme"}
           </Button>

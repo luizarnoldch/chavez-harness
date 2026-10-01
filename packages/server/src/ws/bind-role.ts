@@ -1,4 +1,4 @@
-import type { DaemonRole } from "@chavez-harness/shared";
+import type { ClientLabel, DaemonRole } from "@chavez-harness/shared";
 import type { Hub, HubConnection } from "./hub.ts";
 
 export type BindDaemonResult = {
@@ -39,6 +39,7 @@ export function assignDaemonRole(
 
   hub.update(incoming.connectionId, {
     clientKind: "daemon",
+    clientLabel: null,
     daemonId,
     role,
     lastHeartbeatAt: Date.now(),
@@ -47,9 +48,14 @@ export function assignDaemonRole(
   return { role, closedZombieIds };
 }
 
-export function assignClientRole(hub: Hub, connectionId: string) {
+export function assignClientRole(
+  hub: Hub,
+  connectionId: string,
+  clientLabel: ClientLabel | null = null,
+) {
   hub.update(connectionId, {
     clientKind: "client",
+    clientLabel,
     daemonId: null,
     role: null,
     machineId: null,
@@ -79,6 +85,7 @@ export function assignHostRole(
 
   hub.update(connectionId, {
     clientKind: "host",
+    clientLabel: null,
     machineId,
     hostname,
     workspaceId: null,

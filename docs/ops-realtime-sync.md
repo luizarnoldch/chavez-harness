@@ -4,7 +4,7 @@ Guía operativa para multi-dispositivo y producción. Complementa [architecture.
 
 ## Qué significa «En vivo» / «Sin sync»
 
-En la web (`ChatPage`), el badge **no** es un campo de `chat_session` en Postgres. Es estado **local a la pestaña**:
+En la web (`ChatPage`, vía el socket compartido de `useChavezSocket`), el badge **no** es un campo de `chat_session` en Postgres. Es estado **local a la pestaña**:
 
 | Badge | Significado |
 |-------|-------------|

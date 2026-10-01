@@ -6,6 +6,9 @@ import {
   ChatSessionWithMessagesSchema,
   CreateSessionBodySchema,
   DaemonControlBodySchema,
+  DashboardSnapshotSchema,
+  UpdateSessionBodySchema,
+  UpdateSessionResponseSchema,
   DaemonControlResponseSchema,
   DeleteSessionResponseSchema,
   ErrorBodySchema,
@@ -51,6 +54,26 @@ export function registerChatOpenApiPaths(app: OpenAPIHono) {
       200: {
         description: "Machine presence",
         content: { "application/json": { schema: MachineStatusSchema } },
+      },
+      ...unauthorized,
+    },
+  });
+
+  app.openAPIRegistry.registerPath({
+    method: "get",
+    path: "/api/dashboard",
+    tags: ["Dashboard"],
+    summary: "Cross-workspace snapshot",
+    description:
+      "Machine status, every workspace with daemon status/desired, connections and session count, the 10 most recent sessions and today's session counter. `since` (ISO datetime) overrides the start of the day used for the counter (default: UTC midnight).",
+    security: [{ bearerAuth: [] }],
+    request: {
+      query: z.object({ since: z.string().datetime().optional() }),
+    },
+    responses: {
+      200: {
+        description: "Dashboard snapshot",
+        content: { "application/json": { schema: DashboardSnapshotSchema } },
       },
       ...unauthorized,
     },
@@ -245,6 +268,31 @@ export function registerChatOpenApiPaths(app: OpenAPIHono) {
         content: {
           "application/json": { schema: ChatSessionWithMessagesSchema },
         },
+      },
+      ...unauthorized,
+      ...notFound,
+    },
+  });
+
+  app.openAPIRegistry.registerPath({
+    method: "patch",
+    path: "/api/sessions/{sessionId}",
+    tags: ["Sessions"],
+    summary: "Update session settings",
+    description:
+      "Persists mode/provider/model/title and broadcasts `session.updated` to the workspace and to user observers. Send `x-chavez-client: web|tui` to label the push origin.",
+    security: [{ bearerAuth: [] }],
+    request: {
+      params: sessionIdParams,
+      body: {
+        required: true,
+        content: { "application/json": { schema: UpdateSessionBodySchema } },
+      },
+    },
+    responses: {
+      200: {
+        description: "Updated session and the fields that changed",
+        content: { "application/json": { schema: UpdateSessionResponseSchema } },
       },
       ...unauthorized,
       ...notFound,

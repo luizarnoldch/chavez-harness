@@ -29,10 +29,19 @@ export type DaemonDesiredSource = z.infer<typeof daemonDesiredSourceSchema>;
 export const machineStatusSchema = z.enum(["online", "offline"]);
 export type MachineStatus = z.infer<typeof machineStatusSchema>;
 
+/** Which UI a `client` connection belongs to (set on `workspace.bind`). */
+export const clientLabelSchema = z.enum(["tui", "web"]);
+export type ClientLabel = z.infer<typeof clientLabelSchema>;
+
+/** Who originated an action: a bound TUI/web socket, or a REST caller without a label. */
+export const pushOriginSchema = z.enum(["tui", "web", "api"]);
+export type PushOrigin = z.infer<typeof pushOriginSchema>;
+
 export const workspaceConnectionSchema = z.object({
   connectionId: z.string().min(1),
   clientKind: clientKindSchema.nullable(),
   role: daemonRoleSchema.nullable().optional(),
+  clientLabel: clientLabelSchema.nullable().optional(),
 });
 export type WorkspaceConnection = z.infer<typeof workspaceConnectionSchema>;
 
@@ -57,11 +66,17 @@ export const wsPushBaseSchema = z.object({
   eventId: z.string().min(1),
 });
 
+/** Push that records who triggered it (feeds the dashboard activity feed). */
+export const wsOriginPushBaseSchema = wsPushBaseSchema.extend({
+  origin: pushOriginSchema.optional(),
+});
+
 export const workspaceBindRequestSchema = wsRequestBaseSchema.extend({
   type: z.literal("workspace.bind"),
   path: z.string().min(1),
   clientKind: workspaceBindClientKindSchema,
   daemonId: z.string().min(1).optional(),
+  clientLabel: clientLabelSchema.optional(),
 });
 export type WorkspaceBindRequest = z.infer<typeof workspaceBindRequestSchema>;
 
@@ -70,8 +85,36 @@ export const workspaceBindDataSchema = z.object({
   path: z.string(),
   clientKind: workspaceBindClientKindSchema,
   role: daemonRoleSchema.optional(),
+  clientLabel: clientLabelSchema.optional(),
 });
 export type WorkspaceBindData = z.infer<typeof workspaceBindDataSchema>;
+
+/**
+ * Subscribe this socket to every workspace event of the user (dashboard, rail badges).
+ * Independent of `workspace.bind`; a socket can observe with or without a workspace.
+ */
+export const userSubscribeRequestSchema = wsRequestBaseSchema.extend({
+  type: z.literal("user.subscribe"),
+});
+export type UserSubscribeRequest = z.infer<typeof userSubscribeRequestSchema>;
+
+export const userSubscribeDataSchema = z.object({
+  subscribed: z.literal(true),
+  machineStatus: machineStatusSchema,
+});
+export type UserSubscribeData = z.infer<typeof userSubscribeDataSchema>;
+
+/** Workspace row changed (TUI bind/activate, `daemonDesired` flip). Delivered to the whole user. */
+export const workspaceUpdatedPushSchema = wsOriginPushBaseSchema.extend({
+  type: z.literal("workspace.updated"),
+  data: z.object({
+    reason: z.enum(["bind", "daemon.desired"]),
+    workspace: workspaceDtoSchema,
+    daemonStatus: z.enum(["online", "offline", "stale"]),
+    connections: z.array(workspaceConnectionSchema),
+  }),
+});
+export type WorkspaceUpdatedPush = z.infer<typeof workspaceUpdatedPushSchema>;
 
 export const hostBindRequestSchema = wsRequestBaseSchema.extend({
   type: z.literal("host.bind"),
@@ -253,7 +296,27 @@ export const sessionDeleteRequestSchema = wsRequestBaseSchema.extend({
 });
 export type SessionDeleteRequest = z.infer<typeof sessionDeleteRequestSchema>;
 
-export const sessionDeletedPushSchema = wsPushBaseSchema.extend({
+export const sessionSettingKeySchema = z.enum(["mode", "provider", "model", "title"]);
+export type SessionSettingKey = z.infer<typeof sessionSettingKeySchema>;
+
+/** Persist Plan/Build, provider/model or title for a session (broadcasts `session.updated`). */
+export const sessionUpdateRequestSchema = wsRequestBaseSchema.extend({
+  type: z.literal("session.update"),
+  chatSessionId: z.string().uuid(),
+  mode: chatModeSchema.optional(),
+  provider: z.string().min(1).optional(),
+  model: z.string().min(1).optional(),
+  title: z.string().max(200).nullable().optional(),
+});
+export type SessionUpdateRequest = z.infer<typeof sessionUpdateRequestSchema>;
+
+export const sessionUpdateDataSchema = z.object({
+  session: chatSessionDtoSchema,
+  changed: z.array(sessionSettingKeySchema),
+});
+export type SessionUpdateData = z.infer<typeof sessionUpdateDataSchema>;
+
+export const sessionDeletedPushSchema = wsOriginPushBaseSchema.extend({
   type: z.literal("session.deleted"),
   data: z.object({
     workspaceId: z.string().uuid(),
@@ -273,13 +336,20 @@ export const chatSendRequestSchema = wsRequestBaseSchema.extend({
 });
 export type ChatSendRequest = z.infer<typeof chatSendRequestSchema>;
 
-export const sessionUpdatedPushSchema = wsPushBaseSchema.extend({
+export const sessionChangeSchema = z.enum(["created", "settings", "message"]);
+export type SessionChange = z.infer<typeof sessionChangeSchema>;
+
+export const sessionUpdatedPushSchema = wsOriginPushBaseSchema.extend({
   type: z.literal("session.updated"),
+  /** Why the session row changed (omitted by older servers). */
+  change: sessionChangeSchema.optional(),
+  /** For `change: "settings"`: the fields that actually changed. */
+  changed: z.array(sessionSettingKeySchema).optional(),
   data: chatSessionDtoSchema,
 });
 export type SessionUpdatedPush = z.infer<typeof sessionUpdatedPushSchema>;
 
-export const sessionMessageCreatedPushSchema = wsPushBaseSchema.extend({
+export const sessionMessageCreatedPushSchema = wsOriginPushBaseSchema.extend({
   type: z.literal("session.message.created"),
   data: z.object({
     workspaceId: z.string().uuid(),
@@ -296,6 +366,7 @@ export const connectionStatusPushSchema = wsPushBaseSchema.extend({
     workspaceId: z.string().uuid(),
     path: z.string(),
     daemon: z.enum(["online", "offline", "stale"]),
+    daemonDesired: daemonDesiredSchema.optional(),
     connections: z.array(workspaceConnectionSchema),
   }),
 });
@@ -405,6 +476,7 @@ export const sessionListDataSchema = z.object({
 
 export const incomingWsMessageSchema = z.discriminatedUnion("type", [
   workspaceBindRequestSchema,
+  userSubscribeRequestSchema,
   hostBindRequestSchema,
   daemonHeartbeatRequestSchema,
   workspacePingRequestSchema,
@@ -416,6 +488,7 @@ export const incomingWsMessageSchema = z.discriminatedUnion("type", [
   sessionListRequestSchema,
   sessionOpenRequestSchema,
   sessionCreateRequestSchema,
+  sessionUpdateRequestSchema,
   sessionDeleteRequestSchema,
   chatSendRequestSchema,
   chatGenerateResultSchema,

@@ -1,14 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { ChatSessionDto, WorkspaceConnection } from "@chavez-harness/shared";
 import {
   getMachineStatus,
   getWorkspaceConnections,
   setWorkspaceDaemon,
 } from "@/lib/api";
-import { ensureSessionToken } from "@/lib/session-token";
-import { ChavezWsClient } from "@/lib/ws-client";
+import type { SocketLive } from "@/lib/ws/shared-socket";
+import { useChavezSocket, useSocketPush } from "@/lib/ws/useChavezSocket";
 import type { DaemonStatus, MachineStatus, PresenceState } from "./PresencePanel";
 
 function toPresence(
@@ -27,8 +27,18 @@ export type WorkspacePresenceSessionHandlers = {
   }) => void;
 };
 
+const PRESENCE_PUSHES = [
+  "machine.presence",
+  "workspace.updated",
+  "connection.status",
+  "daemon.presence",
+  "session.updated",
+  "session.deleted",
+] as const;
+
 /**
- * Snapshot REST + live WS (bind + connection.status / daemon.presence / machine.presence).
+ * Snapshot REST + live WS (connection.status / daemon.presence / machine.presence)
+ * over the page's shared socket (`useChavezSocket`).
  * Optional session handlers receive workspace-scoped session.updated / session.deleted pushes.
  */
 export function useWorkspacePresence(
@@ -37,7 +47,7 @@ export function useWorkspacePresence(
   sessionHandlers?: WorkspacePresenceSessionHandlers,
 ): {
   presence: PresenceState | null;
-  live: "connecting" | "live" | "offline";
+  live: SocketLive;
   machineStatus: MachineStatus;
   activate: () => Promise<void>;
   deactivate: () => Promise<void>;
@@ -45,13 +55,11 @@ export function useWorkspacePresence(
   controlError: string | null;
 } {
   const [presence, setPresence] = useState<PresenceState | null>(null);
-  const [live, setLive] = useState<"connecting" | "live" | "offline">("connecting");
   const [machineStatus, setMachineStatus] = useState<MachineStatus>("offline");
   const [controlling, setControlling] = useState(false);
   const [controlError, setControlError] = useState<string | null>(null);
 
-  const sessionHandlersRef = useRef(sessionHandlers);
-  sessionHandlersRef.current = sessionHandlers;
+  const { socket, live, sync } = useChavezSocket(workspaceId, path);
 
   useEffect(() => {
     if (!workspaceId) return;
@@ -75,167 +83,126 @@ export function useWorkspacePresence(
     };
   }, [workspaceId]);
 
+  // Every (re)bind ends with a workspace.sync: take it as the fresh snapshot.
   useEffect(() => {
-    if (!workspaceId || !path) {
-      setLive("offline");
-      return;
-    }
+    if (!sync) return;
+    if (sync.machineStatus) setMachineStatus(sync.machineStatus);
+    setPresence(
+      toPresence(sync.daemonStatus, sync.connections ?? [], {
+        daemonDesired: sync.workspace.daemonDesired,
+        machineStatus: sync.machineStatus,
+      }),
+    );
+  }, [sync]);
 
-    let cancelled = false;
-
-    const bindAndSync = async (client: ChavezWsClient) => {
-      await client.request("workspace.bind", {
-        path,
-        clientKind: "client",
-      });
-      const sync = await client.request<{
-        daemonStatus: DaemonStatus;
-        machineStatus?: MachineStatus;
-        workspace?: { daemonDesired?: "on" | "off" };
-        connections?: WorkspaceConnection[];
-      }>("workspace.sync", { workspaceId });
-      if (cancelled) return;
-      if (sync.machineStatus) setMachineStatus(sync.machineStatus);
-      setPresence(
-        toPresence(sync.daemonStatus, sync.connections ?? [], {
-          daemonDesired: sync.workspace?.daemonDesired,
-          machineStatus: sync.machineStatus,
-        }),
-      );
-    };
-
-    const client = new ChavezWsClient({
-      autoReconnect: true,
-      onClose: () => {
-        if (!cancelled) setLive("connecting");
-      },
-      onOpen: async ({ reconnect }) => {
-        try {
-          await bindAndSync(client);
-          if (!cancelled) setLive("live");
-        } catch (err) {
-          if (!cancelled) setLive("offline");
-          if (!reconnect) throw err;
-          console.error("[presence] rebind failed", err);
-        }
-      },
-      onPush: (msg) => {
-        if (msg.type === "machine.presence") {
-          const data = msg.data as { status?: MachineStatus };
-          if (data.status) {
-            setMachineStatus(data.status);
-            setPresence((prev) =>
-              prev
-                ? { ...prev, machineStatus: data.status }
-                : toPresence("offline", [], { machineStatus: data.status }),
-            );
-          }
-        }
-        if (msg.type === "connection.status") {
-          const data = msg.data as {
-            workspaceId?: string;
-            daemon?: DaemonStatus;
-            connections?: WorkspaceConnection[];
-          };
-          if (data.workspaceId !== workspaceId) return;
-          setPresence((prev) =>
-            toPresence(data.daemon ?? "offline", data.connections ?? [], {
-              daemonDesired: prev?.daemonDesired,
-              machineStatus: prev?.machineStatus ?? machineStatus,
-            }),
-          );
-        }
-        if (msg.type === "daemon.presence") {
-          const data = msg.data as {
-            workspaceId?: string;
-            status?: DaemonStatus;
-          };
-          if (data.workspaceId !== workspaceId || !data.status) return;
-          setPresence((prev) =>
-            toPresence(data.status!, prev?.connections ?? [], {
-              daemonDesired: prev?.daemonDesired,
-              machineStatus: prev?.machineStatus ?? machineStatus,
-            }),
-          );
-        }
-        if (msg.type === "session.updated") {
-          const session = msg.data as ChatSessionDto;
-          if (session.workspaceId !== workspaceId) return;
-          sessionHandlersRef.current?.onSessionUpdated?.(session);
-        }
-        if (msg.type === "session.deleted") {
-          const data = msg.data as {
-            workspaceId?: string;
-            chatSessionId?: string;
-          };
-          if (data.workspaceId !== workspaceId || !data.chatSessionId) return;
-          sessionHandlersRef.current?.onSessionDeleted?.({
-            workspaceId: data.workspaceId,
-            chatSessionId: data.chatSessionId,
-          });
-        }
-      },
-    });
-
-    void (async () => {
-      try {
-        await ensureSessionToken();
-        if (cancelled) return;
-        await client.connect();
-      } catch {
-        if (!cancelled) setLive("offline");
+  useSocketPush(socket, PRESENCE_PUSHES, (msg) => {
+    if (msg.type === "machine.presence") {
+      const data = msg.data as { status?: MachineStatus };
+      if (data.status) {
+        setMachineStatus(data.status);
+        setPresence((prev) =>
+          prev
+            ? { ...prev, machineStatus: data.status }
+            : toPresence("offline", [], { machineStatus: data.status }),
+        );
       }
-    })();
-
-    return () => {
-      cancelled = true;
-      client.close();
-    };
-  }, [workspaceId, path]);
-
-  const activate = useCallback(async () => {
-    if (!workspaceId) return;
-    setControlling(true);
-    setControlError(null);
-    try {
-      const result = await setWorkspaceDaemon(workspaceId, "on", "web");
-      setMachineStatus(result.machineStatus);
+    }
+    if (msg.type === "connection.status") {
+      const data = msg.data as {
+        workspaceId?: string;
+        daemon?: DaemonStatus;
+        daemonDesired?: "on" | "off";
+        connections?: WorkspaceConnection[];
+      };
+      if (data.workspaceId !== workspaceId) return;
       setPresence((prev) =>
-        toPresence(result.daemonStatus, prev?.connections ?? [], {
-          daemonDesired: result.workspace.daemonDesired,
-          machineStatus: result.machineStatus,
+        toPresence(data.daemon ?? "offline", data.connections ?? [], {
+          daemonDesired: data.daemonDesired ?? prev?.daemonDesired,
+          machineStatus: prev?.machineStatus ?? machineStatus,
         }),
       );
-    } catch (err) {
-      setControlError(err instanceof Error ? err.message : "Error al activar");
-    } finally {
-      setControlling(false);
     }
-  }, [workspaceId]);
-
-  const deactivate = useCallback(async () => {
-    if (!workspaceId) return;
-    setControlling(true);
-    setControlError(null);
-    try {
-      const result = await setWorkspaceDaemon(workspaceId, "off", "web");
-      setMachineStatus(result.machineStatus);
+    if (msg.type === "workspace.updated") {
+      const data = msg.data as {
+        workspace?: { id?: string; daemonDesired?: "on" | "off" };
+        daemonStatus?: DaemonStatus;
+        connections?: WorkspaceConnection[];
+      };
+      if (data.workspace?.id !== workspaceId) return;
       setPresence((prev) =>
-        toPresence(result.daemonStatus, prev?.connections ?? [], {
-          daemonDesired: result.workspace.daemonDesired,
-          machineStatus: result.machineStatus,
+        toPresence(data.daemonStatus ?? prev?.daemon ?? "offline", data.connections ?? prev?.connections ?? [], {
+          daemonDesired: data.workspace?.daemonDesired ?? prev?.daemonDesired,
+          machineStatus: prev?.machineStatus ?? machineStatus,
         }),
       );
-    } catch (err) {
-      setControlError(err instanceof Error ? err.message : "Error al desactivar");
-    } finally {
-      setControlling(false);
     }
-  }, [workspaceId]);
+    if (msg.type === "daemon.presence") {
+      const data = msg.data as {
+        workspaceId?: string;
+        status?: DaemonStatus;
+      };
+      if (data.workspaceId !== workspaceId || !data.status) return;
+      const status = data.status;
+      setPresence((prev) =>
+        toPresence(status, prev?.connections ?? [], {
+          daemonDesired: prev?.daemonDesired,
+          machineStatus: prev?.machineStatus ?? machineStatus,
+        }),
+      );
+    }
+    if (msg.type === "session.updated") {
+      const session = msg.data as ChatSessionDto;
+      if (session.workspaceId !== workspaceId) return;
+      sessionHandlers?.onSessionUpdated?.(session);
+    }
+    if (msg.type === "session.deleted") {
+      const data = msg.data as {
+        workspaceId?: string;
+        chatSessionId?: string;
+      };
+      if (data.workspaceId !== workspaceId || !data.chatSessionId) return;
+      sessionHandlers?.onSessionDeleted?.({
+        workspaceId: data.workspaceId,
+        chatSessionId: data.chatSessionId,
+      });
+    }
+  });
+
+  const control = useCallback(
+    async (desired: "on" | "off") => {
+      if (!workspaceId) return;
+      setControlling(true);
+      setControlError(null);
+      try {
+        const result = await setWorkspaceDaemon(workspaceId, desired, "web");
+        setMachineStatus(result.machineStatus);
+        setPresence((prev) =>
+          toPresence(result.daemonStatus, prev?.connections ?? [], {
+            daemonDesired: result.workspace.daemonDesired,
+            machineStatus: result.machineStatus,
+          }),
+        );
+      } catch (err) {
+        setControlError(
+          err instanceof Error
+            ? err.message
+            : desired === "on"
+              ? "Error al activar"
+              : "Error al desactivar",
+        );
+      } finally {
+        setControlling(false);
+      }
+    },
+    [workspaceId],
+  );
+
+  const activate = useCallback(() => control("on"), [control]);
+  const deactivate = useCallback(() => control("off"), [control]);
 
   return {
     presence,
-    live,
+    live: workspaceId && path ? live : "offline",
     machineStatus,
     activate,
     deactivate,

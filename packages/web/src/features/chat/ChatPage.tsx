@@ -1,430 +1,224 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import type {
-  ChatMessageDto,
-  ChatSessionDto,
-  ChatSessionWithMessagesDto,
-} from "@chavez-harness/shared";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { ProviderCredentialStatus } from "@chavez-harness/shared";
+import { CircleAlert, KeyRound } from "lucide-react";
 import { toast } from "sonner";
-import { getSessionWithMessages, getWorkspace } from "@/lib/api";
-import { ensureSessionToken } from "@/lib/session-token";
-import { randomId } from "@/lib/uuid";
-import { ChavezWsClient } from "@/lib/ws-client";
-import { AuthShell } from "@/features/auth/AuthShell";
-import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
-import { PresencePanel } from "@/features/workspaces/PresencePanel";
+import { AppShell } from "@/components/shell/AppShell";
+import { Skeleton } from "@/components/ui/skeleton";
+import { listProviderCredentials } from "@/lib/api";
+import { basename } from "@/lib/format";
 import { useWorkspacePresence } from "@/features/workspaces/useWorkspacePresence";
-import { ChatMarkdown, ChatMarkdownStyles } from "@/features/chat/markdown/ChatMarkdown";
-
-function textFromParts(parts: ChatMessageDto["parts"]): string {
-  return parts
-    .filter((p): p is Extract<typeof p, { type: "text" }> => p.type === "text")
-    .map((p) => p.text)
-    .join("\n")
-    .trim();
-}
-
-function mergeMessages(
-  current: ChatMessageDto[],
-  incoming: ChatMessageDto[],
-): ChatMessageDto[] {
-  const byId = new Map(current.map((m) => [m.id, m]));
-  for (const msg of incoming) {
-    byId.set(msg.id, msg);
-  }
-  return [...byId.values()].sort((a, b) => a.seq - b.seq);
-}
-
-function optimisticUserMessage(
-  sessionId: string,
-  text: string,
-  mode: "plan" | "build",
-  clientMessageId: string,
-): ChatMessageDto {
-  return {
-    id: `optimistic-${clientMessageId}`,
-    chatSessionId: sessionId,
-    role: "user",
-    mode,
-    provider: null,
-    model: null,
-    status: "pending",
-    error: null,
-    parts: [{ type: "text", text }],
-    usage: null,
-    clientMessageId,
-    seq: Number.MAX_SAFE_INTEGER - 1,
-    createdAt: new Date().toISOString(),
-  };
-}
-
-type ChatSendResult = {
-  session: ChatSessionDto;
-  userMessage: ChatMessageDto;
-  assistantMessage: ChatMessageDto;
-  created: boolean;
-};
+import { Composer } from "./composer/Composer";
+import type { ChatMode } from "./composer/ModePill";
+import type { ModelChoice } from "./composer/model-options";
+import { ChatHeader } from "./header/ChatHeader";
+import { SyncBadge } from "./header/SyncBadge";
+import { WorkingStatus } from "./live/WorkingStatus";
+import { useChatSession } from "./state/useChatSession";
+import { Transcript } from "./transcript/Transcript";
 
 type ChatPageProps = {
   sessionId: string;
 };
 
+/** Keep following new output only while the reader is near the bottom. */
+const STICK_THRESHOLD_PX = 160;
+
 export function ChatPage({ sessionId }: ChatPageProps) {
-  const [session, setSession] = useState<ChatSessionWithMessagesDto | null>(null);
-  const [messages, setMessages] = useState<ChatMessageDto[]>([]);
-  const [draft, setDraft] = useState("");
-  const [sending, setSending] = useState(false);
-  const [streamDraft, setStreamDraft] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [live, setLive] = useState<"connecting" | "live" | "offline">("connecting");
-  const [workspacePath, setWorkspacePath] = useState<string | null>(null);
-  const bottomRef = useRef<HTMLDivElement>(null);
-  const clientRef = useRef<ChavezWsClient | null>(null);
-  const pendingClientMsgId = useRef<string | null>(null);
+  const chat = useChatSession(sessionId);
+  const { session, workspace, messages, stream, sending, live } = chat;
 
-  const {
-    presence,
-    activate,
-    deactivate,
-    controlling,
-    controlError,
-  } = useWorkspacePresence(session?.workspaceId ?? null, workspacePath);
+  const presence = useWorkspacePresence(session?.workspaceId ?? null, workspace?.path ?? null);
 
-  const mode = session?.mode ?? "plan";
+  const [mode, setMode] = useState<ChatMode>("plan");
+  const [model, setModel] = useState<ModelChoice | null>(null);
+  const [credentials, setCredentials] = useState<ProviderCredentialStatus[] | null>(null);
 
-  const load = useCallback(async () => {
-    const data = await getSessionWithMessages(sessionId);
-    setSession(data);
-    setMessages(data.messages);
-    return data;
-  }, [sessionId]);
+  // Composer follows the persisted session until the user picks something else;
+  // a session.updated from the TUI (or our own send) re-syncs it.
+  useEffect(() => {
+    if (!session) return;
+    setMode(session.mode);
+    setModel({ provider: session.provider, model: session.model });
+  }, [session?.mode, session?.provider, session?.model]);
 
   useEffect(() => {
     let cancelled = false;
-    void load().catch((err: unknown) => {
-      if (cancelled) return;
-      setError(err instanceof Error ? err.message : "Error al cargar el chat");
-    });
+    void listProviderCredentials()
+      .then((list) => {
+        if (!cancelled) setCredentials(list);
+      })
+      .catch(() => undefined);
     return () => {
       cancelled = true;
     };
-  }, [load]);
+  }, []);
 
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const stickRef = useRef(true);
+
+  function onScroll() {
+    const el = scrollRef.current;
+    if (!el) return;
+    stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < STICK_THRESHOLD_PX;
+  }
+
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (el && stickRef.current) el.scrollTop = el.scrollHeight;
+  }, [messages, stream, sending]);
+
+  const missingCursorKey =
+    model?.provider === "cursor" &&
+    credentials !== null &&
+    !credentials.some((c) => c.provider === "cursor" && c.configured);
+
+  const generating = sending || stream !== null;
+  const workspaceHref = session ? `/workspaces/${session.workspaceId}` : "/workspaces";
+
+  // Deleted from the TUI or another tab: say so, then leave for the workspace.
   useEffect(() => {
-    if (!session?.workspaceId) return;
+    if (!chat.deleted) return;
+    toast.info("Esta sesión se eliminó desde otro cliente.");
+    const timer = setTimeout(() => window.location.replace(workspaceHref), 1200);
+    return () => clearTimeout(timer);
+  }, [chat.deleted, workspaceHref]);
 
-    let cancelled = false;
-    const workspaceId = session.workspaceId;
-    let pathForBind: string | null = null;
-
-    const bindAndSync = async (client: ChavezWsClient) => {
-      if (!pathForBind) {
-        const workspace = await getWorkspace(workspaceId);
-        pathForBind = workspace.path;
-        setWorkspacePath(workspace.path);
-      }
-      await client.request("workspace.bind", {
-        path: pathForBind,
-        clientKind: "client",
-      });
-      await client.request("workspace.sync", {
-        workspaceId,
-        chatSessionId: sessionId,
-      });
-    };
-
-    const client = new ChavezWsClient({
-      autoReconnect: true,
-      onClose: () => {
-        if (!cancelled) setLive("connecting");
-      },
-      onOpen: async ({ reconnect }) => {
-        try {
-          await bindAndSync(client);
-          if (cancelled) return;
-          setLive("live");
-          if (reconnect) setError(null);
-        } catch (err) {
-          if (!cancelled) {
-            setLive("offline");
-            setError(
-              err instanceof Error
-                ? err.message
-                : "No se pudo sincronizar el chat en vivo",
-            );
-          }
-          if (!reconnect) throw err;
-        }
-      },
-      onPush: (msg) => {
-        if (msg.type === "session.message.created") {
-          const data = msg.data as {
-            session?: { id?: string };
-            message?: ChatMessageDto;
-          };
-          if (data.session?.id !== sessionId || !data.message) return;
-          const message = data.message;
-          setMessages((prev) => {
-            let next = prev;
-            if (
-              message.role === "user" &&
-              message.clientMessageId &&
-              pendingClientMsgId.current === message.clientMessageId
-            ) {
-              next = prev.filter((m) => m.id !== `optimistic-${message.clientMessageId}`);
-              pendingClientMsgId.current = null;
-            }
-            return mergeMessages(next, [message]);
-          });
-          if (message.role === "assistant") {
-            setStreamDraft("");
-          }
-        }
-        if (msg.type === "session.updated") {
-          const data = msg.data as { id?: string };
-          if (data.id === sessionId) {
-            setSession((prev) => (prev ? { ...prev, ...data } : prev));
-          }
-        }
-        if (msg.type === "chat.generate.progress") {
-          const data = msg.data as {
-            sessionId?: string;
-            phase?: string;
-            textDelta?: string;
-          };
-          if (data.sessionId !== sessionId) return;
-          if (data.phase === "streaming" && data.textDelta) {
-            setStreamDraft((prev) => prev + data.textDelta);
-          }
-          if (data.phase === "done" || data.phase === "error") {
-            setStreamDraft("");
-          }
-        }
-      },
-    });
-    clientRef.current = client;
-
-    void (async () => {
-      try {
-        await ensureSessionToken();
-        if (cancelled) return;
-        const workspace = await getWorkspace(workspaceId);
-        if (cancelled) return;
-        pathForBind = workspace.path;
-        setWorkspacePath(workspace.path);
-        await client.connect();
-      } catch (err) {
-        if (!cancelled) {
-          setLive("offline");
-          setError(
-            err instanceof Error
-              ? err.message
-              : "No se pudo sincronizar el chat en vivo",
-          );
-        }
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-      client.close();
-      if (clientRef.current === client) clientRef.current = null;
-    };
-  }, [session?.workspaceId, sessionId]);
-
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length, streamDraft]);
-
-  const title = useMemo(
-    () => session?.title?.trim() || "Chat",
-    [session?.title],
-  );
-
-  async function onSend(event: FormEvent) {
-    event.preventDefault();
-    const text = draft.trim();
-    if (!text || sending) return;
-
-    const client = clientRef.current;
-    if (!client || live !== "live") {
-      toast.error("Sin enlace al workspace; abre el Host / daemon y recarga.");
-      return;
-    }
-
-    const clientMessageId = randomId();
-    pendingClientMsgId.current = clientMessageId;
-    const optimistic = optimisticUserMessage(sessionId, text, mode, clientMessageId);
-
-    setSending(true);
-    setStreamDraft("");
-    setDraft("");
-    setMessages((prev) => [...prev, optimistic]);
-
+  // Plan/Build and model are shared state: persist right away so the TUI follows.
+  async function onModeChange(next: ChatMode) {
+    const previous = mode;
+    setMode(next);
     try {
-      const result = await client.request<ChatSendResult>("chat.send", {
-        chatSessionId: sessionId,
-        text,
-        mode,
-        clientMessageId,
-      });
-      pendingClientMsgId.current = null;
-      setMessages((prev) => {
-        const withoutOptimistic = prev.filter(
-          (m) => m.id !== `optimistic-${clientMessageId}`,
-        );
-        return mergeMessages(withoutOptimistic, [
-          result.userMessage,
-          result.assistantMessage,
-        ]);
-      });
-      setSession((prev) =>
-        prev ? { ...prev, ...result.session, messages: prev.messages } : prev,
-      );
-      setStreamDraft("");
+      await chat.updateSettings({ mode: next });
     } catch (err) {
-      pendingClientMsgId.current = null;
-      setMessages((prev) =>
-        prev.filter((m) => m.id !== `optimistic-${clientMessageId}`),
-      );
-      setDraft(text);
-      setStreamDraft("");
-      toast.error(err instanceof Error ? err.message : "No se pudo enviar");
-    } finally {
-      setSending(false);
+      setMode(previous);
+      toast.error(err instanceof Error ? err.message : "No se pudo cambiar el modo");
     }
   }
 
+  async function onModelChange(next: ModelChoice) {
+    const previous = model;
+    setModel(next);
+    try {
+      await chat.updateSettings({ provider: next.provider, model: next.model });
+    } catch (err) {
+      setModel(previous);
+      toast.error(err instanceof Error ? err.message : "No se pudo cambiar el modelo");
+    }
+  }
+
+  async function onSend(text: string) {
+    if (!session || !model) return;
+    if (live !== "live") {
+      toast.error("Sin enlace al workspace; abre el Host / daemon y recarga.");
+      throw new Error("not live");
+    }
+    stickRef.current = true;
+    try {
+      await chat.send({ text, mode, provider: model.provider, model: model.model });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "No se pudo enviar");
+      throw err;
+    }
+  }
+
+  const title = session?.title?.trim() || "Chat";
+
   return (
-    <AuthShell title={title}>
-      <div className="flex h-[calc(100dvh-3.5rem-2.5rem)] flex-col gap-3">
-        <div className="flex flex-col gap-2">
-          <div className="flex items-center justify-between gap-2">
-            <a
-              href={session ? `/workspaces/${session.workspaceId}` : "/workspaces"}
-              className="text-muted-foreground hover:text-foreground text-xs underline-offset-4 hover:underline"
-            >
-              ← Sesiones
-            </a>
-            <span
-              className={
-                live === "live"
-                  ? "text-build text-xs"
-                  : live === "connecting"
-                    ? "text-muted-foreground text-xs"
-                    : "text-destructive text-xs"
-              }
-            >
-              {live === "live" ? "En vivo" : live === "connecting" ? "Conectando…" : "Sin sync"}
-            </span>
+    <AppShell
+      active="workspaces"
+      title={title}
+      breadcrumbs={[
+        { label: "Inicio", href: "/" },
+        { label: workspace ? basename(workspace.path) : "Workspace", href: workspaceHref },
+        { label: title },
+      ]}
+      subtitle={
+        <>
+          <SyncBadge live={live} size="sm" />
+          {workspace ? <span className="truncate">· {basename(workspace.path)}</span> : null}
+        </>
+      }
+      backHref={workspaceHref}
+      immersive
+      fill
+    >
+      <div className="flex min-h-0 flex-1 flex-col">
+        <div
+          ref={scrollRef}
+          onScroll={onScroll}
+          className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain"
+        >
+          <div className="mx-auto flex w-full max-w-[820px] flex-col gap-3 px-4 pt-3 pb-6 sm:px-6">
+            {session ? (
+              <ChatHeader
+                session={session}
+                workspace={workspace}
+                mode={mode}
+                live={live}
+                presence={presence.presence}
+                onActivate={() => void presence.activate()}
+                onDeactivate={() => void presence.deactivate()}
+                controlling={presence.controlling}
+                controlError={presence.controlError}
+              />
+            ) : chat.error ? null : (
+              <Skeleton className="h-36 w-full rounded-xl" />
+            )}
+
+            {chat.error ? (
+              <div
+                role="alert"
+                className="flex items-start gap-2 rounded-xl border border-destructive/40 bg-destructive-soft px-4 py-3 text-[13px]"
+              >
+                <CircleAlert className="mt-0.5 size-4 shrink-0 text-destructive" />
+                <span>{chat.error}</span>
+              </div>
+            ) : null}
+
+            {session ? <Transcript messages={messages} stream={stream} /> : null}
+            <WorkingStatus stream={stream} sending={sending} />
           </div>
-          <PresencePanel
-            presence={presence}
-            compact
-            onActivate={() => void activate()}
-            onDeactivate={() => void deactivate()}
-            controlling={controlling}
-            controlError={controlError}
-          />
-          <p className="text-muted-foreground text-[11px] leading-snug">
-            Modo {mode === "build" ? "Build" : "Plan"}:{" "}
-            {mode === "build"
-              ? "herramientas completas del agente (lectura, edición, shell, web…)."
-              : "solo lectura (sin escritura ni shell)."}{" "}
-            «En vivo» indica que este navegador está enlazado al hub (no es un estado global
-            de la sesión). El TUI solo recibe el chat en vivo si tiene abierta esta misma sesión.
-          </p>
         </div>
 
-        {error ? (
-          <p className="text-destructive text-sm" role="alert">
-            {error}
-          </p>
-        ) : null}
-
-        <div className="min-h-0 flex-1 overflow-y-auto rounded-xl border border-border/80 bg-card/40 px-3 py-3">
-          <ChatMarkdownStyles />
-          {messages.length === 0 && !streamDraft ? (
-            <p className="text-muted-foreground py-8 text-center text-sm">
-              Sin mensajes todavía. Escribe abajo o usa el TUI.
-            </p>
-          ) : (
-            <ul className="flex flex-col gap-3">
-              {messages.map((msg) => {
-                const body = textFromParts(msg.parts);
-                const isUser = msg.role === "user";
-                return (
-                  <li
-                    key={msg.id}
-                    className={`flex ${isUser ? "justify-end" : "justify-start"}`}
-                  >
-                    <div
-                      className={`max-w-[92%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed ${
-                        isUser
-                          ? "bg-primary text-primary-foreground whitespace-pre-wrap"
-                          : "bg-secondary text-secondary-foreground"
-                      }`}
-                    >
-                      {!isUser ? (
-                        <p className="mb-1 text-[10px] font-medium tracking-wide uppercase opacity-70">
-                          Asistente
-                          {msg.mode ? ` · ${msg.mode}` : ""}
-                        </p>
-                      ) : null}
-                      {body ? (
-                        isUser ? (
-                          body
-                        ) : (
-                          <ChatMarkdown source={body} />
-                        )
-                      ) : (
-                        <span className="opacity-60">
-                          {msg.status === "pending" ? "…" : "(sin texto)"}
-                        </span>
-                      )}
-                      {msg.error ? (
-                        <p className="mt-2 text-xs text-red-300">{msg.error}</p>
-                      ) : null}
-                    </div>
-                  </li>
-                );
-              })}
-              {streamDraft ? (
-                <li className="flex justify-start">
-                  <div className="bg-secondary text-secondary-foreground max-w-[92%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed">
-                    <p className="mb-1 text-[10px] font-medium tracking-wide uppercase opacity-70">
-                      Asistente
-                    </p>
-                    <ChatMarkdown source={streamDraft} />
-                    <span className="ml-0.5 inline-block animate-pulse">▍</span>
-                  </div>
-                </li>
-              ) : null}
-            </ul>
-          )}
-          <div ref={bottomRef} />
+        <div className="pb-safe shrink-0 border-t border-border bg-card/95 px-3 pt-2 backdrop-blur-md sm:px-4">
+          <div className="mx-auto flex w-full max-w-[820px] flex-col gap-2 pb-2">
+            {missingCursorKey ? (
+              <div className="flex items-start gap-2 rounded-lg border border-status-progress/40 bg-status-progress-soft px-3 py-2 text-[13px]">
+                <KeyRound className="mt-0.5 size-4 shrink-0 text-status-progress" />
+                <span>
+                  Falta la API key de Cursor.{" "}
+                  <a href="/arsenal/providers" className="font-semibold text-primary underline underline-offset-2">
+                    Conéctala en Proveedores
+                  </a>{" "}
+                  o elige el modelo local <code className="font-mono">eco</code>.
+                </span>
+              </div>
+            ) : null}
+            {model ? (
+              <Composer
+                mode={mode}
+                onModeChange={(next) => void onModeChange(next)}
+                model={model}
+                onModelChange={(next) => void onModelChange(next)}
+                onSend={onSend}
+                disabled={!session || live !== "live"}
+                busy={generating}
+                placeholder={
+                  generating
+                    ? "El agente está trabajando…"
+                    : live === "live"
+                      ? "Escribe un mensaje…"
+                      : "Esperando enlace con el workspace…"
+                }
+              />
+            ) : (
+              <Skeleton className="h-[84px] w-full rounded-[18px]" />
+            )}
+          </div>
         </div>
-
-        <form onSubmit={onSend} className="flex flex-col gap-2 pb-[env(safe-area-inset-bottom)]">
-          <Textarea
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            placeholder="Escribe un mensaje…"
-            rows={3}
-            className="min-h-20 resize-none text-base"
-            disabled={sending || !session || live !== "live"}
-          />
-          <Button
-            type="submit"
-            className="h-11 w-full"
-            disabled={sending || live !== "live" || !draft.trim()}
-          >
-            {sending ? "Enviando…" : "Enviar"}
-          </Button>
-        </form>
       </div>
-    </AuthShell>
+    </AppShell>
   );
 }

@@ -2,6 +2,7 @@ import type {
   ChatMessageDto,
   ChatSessionDto,
   ChatSessionWithMessagesDto,
+  SessionSettingKey,
   WorkspaceDto,
 } from "@chavez-harness/shared";
 import {
@@ -182,9 +183,21 @@ export function createMemoryChatService(workspaces: WorkspaceService): ChatServi
         createdAt: now,
       };
 
+      // Mirror the DB service: the session row is patched before the user push goes out.
+      const sessionAfterUser: ChatSessionDto = {
+        ...session,
+        mode: input.mode,
+        provider: userMessage.provider!,
+        model: userMessage.model!,
+        lastMessageAt: now,
+        updatedAt: now,
+        title: session.title ?? input.text.slice(0, 80),
+      };
+      sessions.set(session.id, sessionAfterUser);
+
       if (input.onUserMessagePersisted) {
         await input.onUserMessagePersisted({
-          session,
+          session: sessionAfterUser,
           userMessage,
           workspaceId: session.workspaceId,
         });
@@ -228,6 +241,56 @@ export function createMemoryChatService(workspaces: WorkspaceService): ChatServi
       };
       sessions.set(session.id, updated);
       return { session: updated, userMessage, assistantMessage, created: true };
+    },
+    async updateSession(userId, sessionId, patch) {
+      const session = sessions.get(sessionId);
+      if (!session) throw new ChatNotFoundError("Sesión no encontrada");
+      const ws = await workspaces.getForUser(userId, session.workspaceId);
+      if (!ws) throw new ChatNotFoundError("Sesión no encontrada");
+
+      const changed: SessionSettingKey[] = [];
+      const next: ChatSessionDto = { ...session };
+      if (patch.mode !== undefined && patch.mode !== session.mode) {
+        next.mode = patch.mode;
+        changed.push("mode");
+      }
+      if (patch.provider !== undefined && patch.provider !== session.provider) {
+        next.provider = patch.provider;
+        changed.push("provider");
+      }
+      if (patch.model !== undefined && patch.model !== session.model) {
+        next.model = patch.model;
+        changed.push("model");
+      }
+      if (patch.title !== undefined) {
+        const title = patch.title?.trim() ? patch.title.trim() : null;
+        if (title !== session.title) {
+          next.title = title;
+          changed.push("title");
+        }
+      }
+      if (changed.length === 0) return { session, changed };
+      next.updatedAt = new Date().toISOString();
+      sessions.set(sessionId, next);
+      return { session: next, changed };
+    },
+    async getDashboardStats(userId, { limit, since }) {
+      const pathById = new Map((await workspaces.listForUser(userId)).map((w) => [w.id, w.path]));
+      const owned = [...sessions.values()].filter((s) => pathById.has(s.workspaceId));
+      const activity = (s: ChatSessionDto) => s.lastMessageAt ?? s.createdAt;
+      const sessionCountByWorkspace: Record<string, number> = {};
+      for (const s of owned) {
+        sessionCountByWorkspace[s.workspaceId] = (sessionCountByWorkspace[s.workspaceId] ?? 0) + 1;
+      }
+      const recentSessions = [...owned]
+        .sort((a, b) => activity(b).localeCompare(activity(a)))
+        .slice(0, limit)
+        .map((s) => ({ ...s, workspacePath: pathById.get(s.workspaceId) ?? "" }));
+      return {
+        sessionCountByWorkspace,
+        recentSessions,
+        sessionsToday: owned.filter((s) => activity(s) >= since.toISOString()).length,
+      };
     },
     async deleteSession(userId, sessionId) {
       const session = sessions.get(sessionId);

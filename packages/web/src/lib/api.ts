@@ -2,6 +2,9 @@ import type {
   ChatMessageDto,
   ChatSessionDto,
   ChatSessionWithMessagesDto,
+  ConnectableProvider,
+  DashboardSnapshot,
+  ProviderCredentialStatus,
   WorkspaceConnection,
   WorkspaceDto,
 } from "@chavez-harness/shared";
@@ -9,6 +12,8 @@ import { apiUrl } from "./env";
 
 async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
   const headers = new Headers(init.headers);
+  // Labels REST actions so their pushes carry `origin: "web"` instead of `api`.
+  headers.set("x-chavez-client", "web");
   if (!headers.has("content-type") && init.body) {
     headers.set("content-type", "application/json");
   }
@@ -65,6 +70,16 @@ export async function getWorkspaceConnections(workspaceId: string): Promise<{
     machineStatus: "online" | "offline";
     connections: WorkspaceConnection[];
   };
+}
+
+/** Cross-workspace snapshot; `since` (ISO) is the start of "today" for the session counter. */
+export async function getDashboard(since?: string): Promise<DashboardSnapshot> {
+  const query = since ? `?since=${encodeURIComponent(since)}` : "";
+  const response = await apiFetch(`/api/dashboard${query}`);
+  if (!response.ok) {
+    throw new Error(await parseError(response, "No se pudo cargar el panel"));
+  }
+  return (await response.json()) as DashboardSnapshot;
 }
 
 export async function getMachineStatus(): Promise<{
@@ -136,6 +151,28 @@ export async function createSession(
   return (await response.json()) as ChatSessionDto;
 }
 
+export async function updateSession(
+  sessionId: string,
+  patch: {
+    mode?: "plan" | "build";
+    provider?: string;
+    model?: string;
+    title?: string | null;
+  },
+): Promise<{ session: ChatSessionDto; changed: Array<"mode" | "provider" | "model" | "title"> }> {
+  const response = await apiFetch(`/api/sessions/${sessionId}`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
+  if (!response.ok) {
+    throw new Error(await parseError(response, "No se pudo actualizar la sesión"));
+  }
+  return (await response.json()) as {
+    session: ChatSessionDto;
+    changed: Array<"mode" | "provider" | "model" | "title">;
+  };
+}
+
 export async function deleteSession(sessionId: string): Promise<void> {
   const response = await apiFetch(`/api/sessions/${sessionId}`, {
     method: "DELETE",
@@ -153,7 +190,7 @@ export async function getSessionWithMessages(
     afterSeq !== undefined
       ? `/api/sessions/${sessionId}?afterSeq=${encodeURIComponent(String(afterSeq))}`
       : `/api/sessions/${sessionId}`;
-  const response = await fetch(apiUrl(path), { credentials: "include" });
+  const response = await apiFetch(path);
   if (!response.ok) {
     throw new Error(await parseError(response, "No se pudo cargar la sesión"));
   }
@@ -188,4 +225,27 @@ export async function sendMessage(
     assistantMessage: ChatMessageDto;
     created: boolean;
   };
+}
+
+export async function listProviderCredentials(): Promise<ProviderCredentialStatus[]> {
+  const response = await apiFetch("/api/providers");
+  if (!response.ok) {
+    throw new Error(await parseError(response, "No se pudieron cargar los proveedores"));
+  }
+  const body = (await response.json()) as { providers: ProviderCredentialStatus[] };
+  return body.providers;
+}
+
+export async function upsertProviderCredential(
+  provider: ConnectableProvider,
+  apiKey: string,
+): Promise<ProviderCredentialStatus> {
+  const response = await apiFetch(`/api/providers/${provider}/credentials`, {
+    method: "PUT",
+    body: JSON.stringify({ apiKey }),
+  });
+  if (!response.ok) {
+    throw new Error(await parseError(response, "No se pudo guardar la credencial"));
+  }
+  return (await response.json()) as ProviderCredentialStatus;
 }

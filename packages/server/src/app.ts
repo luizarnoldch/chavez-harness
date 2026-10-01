@@ -10,7 +10,7 @@ import {
 } from "./openapi/auth.paths.ts";
 import { registerChatOpenApiPaths } from "./openapi/chat.paths.ts";
 import { registerProvidersOpenApiPaths } from "./openapi/providers.paths.ts";
-import { createApiRoutes } from "./routes/api.ts";
+import { CLIENT_HEADER, createApiRoutes } from "./routes/api.ts";
 import { createProviderRoutes } from "./routes/providers.ts";
 import { authRoutes } from "./routes/auth.ts";
 import { registerHealthRoutes } from "./routes/health.ts";
@@ -63,7 +63,7 @@ export function createApp(options: CreateAppOptions = {}) {
         return isAllowedWebOrigin(origin) ? origin : null;
       },
       credentials: true,
-      allowHeaders: ["Content-Type", "Authorization"],
+      allowHeaders: ["Content-Type", "Authorization", CLIENT_HEADER],
       allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
       exposeHeaders: ["set-auth-token"],
     }),

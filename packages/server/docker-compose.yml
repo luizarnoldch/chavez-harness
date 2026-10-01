@@ -41,5 +41,19 @@ services:
       db:
         condition: service_healthy
 
+  web:
+    build:
+      context: ../..
+      dockerfile: packages/web/Dockerfile
+    container_name: chavez-web
+    restart: always
+    ports:
+      - "0.0.0.0:4321:4321"
+    environment:
+      PORT: "4321"
+      API_INTERNAL_URL: http://server:3000
+    depends_on:
+      - server
+
 volumes:
   db-data:

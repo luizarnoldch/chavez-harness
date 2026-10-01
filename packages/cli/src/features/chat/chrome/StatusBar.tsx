@@ -11,6 +11,8 @@ type StatusBarProps = {
   sessionLabel?: string;
   linkStatus?: LinkStatus;
   workspacePath?: string | null;
+  /** Transient warning from the workspace bridge (e.g. session deleted elsewhere). */
+  notice?: string | null;
   open?: boolean;
   onToggle?: () => void;
 };
@@ -39,6 +41,7 @@ export function StatusBar({
   sessionLabel,
   linkStatus = "disconnected",
   workspacePath,
+  notice,
   open = false,
   onToggle,
 }: StatusBarProps) {
@@ -72,6 +75,7 @@ export function StatusBar({
         ) : null}
       </box>
       <box flexDirection="row" alignItems="center">
+        {notice ? <text fg="#e0af68">{notice} · </text> : null}
         {sessionLabel ? (
           <text attributes={TextAttributes.DIM}>{sessionLabel}</text>
         ) : null}

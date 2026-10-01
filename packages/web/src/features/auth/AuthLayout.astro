@@ -1,0 +1,31 @@
+---
+import { BrandMark } from "@/components/shell/BrandMark";
+import { ThemeToggle } from "@/components/shell/ThemeToggle";
+
+type Props = {
+  heading: string;
+  lede: string;
+};
+
+const { heading, lede } = Astro.props;
+---
+
+<div class="relative flex min-h-dvh flex-col px-4 py-6 sm:px-6">
+  <div class="flex items-center justify-between">
+    <a href="/login" class="flex items-center gap-2">
+      <BrandMark />
+      <span class="font-heading text-base font-bold tracking-tight">Chavez Harness</span>
+    </a>
+    <ThemeToggle client:load />
+  </div>
+  <div class="flex flex-1 flex-col justify-center py-10">
+    <div class="mx-auto w-full max-w-[400px]">
+      <div class="mb-6 text-center">
+        <p class="eyebrow">Web + TUI</p>
+        <h1 class="mt-2 text-2xl sm:text-[1.75rem]">{heading}</h1>
+        <p class="mt-2 text-sm text-muted-foreground">{lede}</p>
+      </div>
+      <slot />
+    </div>
+  </div>
+</div>

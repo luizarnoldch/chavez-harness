@@ -49,20 +49,39 @@ export function SessionsDialog({
   const { bridge } = useWorkspaceConnection();
   const { show } = useToast();
   const [load, setLoad] = useState<LoadState>({ status: "loading" });
-  const [selectedIndex, setSelectedIndex] = useState(0);
+  // Selection follows the session id so live inserts/removals don't move the cursor.
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const lastIndexRef = useRef(0);
+  const initialSessionIdRef = useRef(currentSessionId);
+
+  const sessions = load.status === "ready" ? load.sessions : [];
+  const selectedIdx = selectedId ? sessions.findIndex((s) => s.id === selectedId) : -1;
+  const safeIndex =
+    sessions.length === 0
+      ? 0
+      : selectedIdx >= 0
+        ? selectedIdx
+        : Math.min(lastIndexRef.current, sessions.length - 1);
+
+  useEffect(() => {
+    lastIndexRef.current = safeIndex;
+  }, [safeIndex]);
 
   useEffect(() => {
     let cancelled = false;
+    let loaded = false;
+    const unsubscribe = bridge.subscribeSessions(() => {
+      if (!loaded || cancelled) return;
+      setLoad({ status: "ready", sessions: bridge.getSessionsList() });
+    });
     void (async () => {
       try {
-        const sessions = await bridge.listSessions();
+        const listed = await bridge.listSessions();
         if (cancelled) return;
-        setLoad({ status: "ready", sessions });
-        const activeIdx = currentSessionId
-          ? sessions.findIndex((s) => s.id === currentSessionId)
-          : -1;
-        setSelectedIndex(activeIdx >= 0 ? activeIdx : 0);
+        loaded = true;
+        setLoad({ status: "ready", sessions: listed });
+        setSelectedId(initialSessionIdRef.current ?? listed[0]?.id ?? null);
       } catch (err) {
         if (cancelled) return;
         setLoad({
@@ -73,8 +92,9 @@ export function SessionsDialog({
     })();
     return () => {
       cancelled = true;
+      unsubscribe();
     };
-  }, [bridge, currentSessionId]);
+  }, [bridge]);
 
   useKeyboard((key) => {
     if (matchesShortcut(key, getShortcut("focus-prompt")) || key.name === "escape") {
@@ -83,19 +103,17 @@ export function SessionsDialog({
       return;
     }
 
-    if (load.status !== "ready" || load.sessions.length === 0 || deleting) return;
+    if (load.status !== "ready" || sessions.length === 0 || deleting) return;
 
     if (matchesShortcut(key, getShortcut("sessions-delete"))) {
       key.preventDefault();
-      const session = load.sessions[selectedIndex];
+      const session = sessions[safeIndex];
       if (!session) return;
       setDeleting(true);
       void (async () => {
         try {
           await bridge.deleteSession(session.id);
-          const remaining = load.sessions.filter((s) => s.id !== session.id);
-          setLoad({ status: "ready", sessions: remaining });
-          setSelectedIndex((i) => Math.min(i, Math.max(0, remaining.length - 1)));
+          const remaining = bridge.getSessionsList();
           show("Sesión eliminada", "success");
           if (session.id === currentSessionId) {
             const next = remaining[0]?.id ?? null;
@@ -113,17 +131,17 @@ export function SessionsDialog({
 
     if (key.name === "up" || key.name === "k") {
       key.preventDefault();
-      setSelectedIndex((i) => Math.max(0, i - 1));
+      setSelectedId(sessions[Math.max(0, safeIndex - 1)]?.id ?? null);
       return;
     }
     if (key.name === "down" || key.name === "j") {
       key.preventDefault();
-      setSelectedIndex((i) => Math.min(load.sessions.length - 1, i + 1));
+      setSelectedId(sessions[Math.min(sessions.length - 1, safeIndex + 1)]?.id ?? null);
       return;
     }
     if (key.name === "return" || key.name === "kpenter") {
       key.preventDefault();
-      const session = load.sessions[selectedIndex];
+      const session = sessions[safeIndex];
       if (session) onSelect(session.id);
     }
   });
@@ -155,7 +173,6 @@ export function SessionsDialog({
   }
 
   const visibleRows = Math.min(load.sessions.length, MAX_VISIBLE);
-  const safeIndex = Math.min(selectedIndex, load.sessions.length - 1);
 
   return (
     <SessionsList

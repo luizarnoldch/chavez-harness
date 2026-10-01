@@ -1,4 +1,4 @@
-import type { ClientKind, DaemonRole } from "@chavez-harness/shared";
+import type { ClientKind, ClientLabel, DaemonRole } from "@chavez-harness/shared";
 
 export type WsSender = {
   send: (data: string) => void;
@@ -10,6 +10,10 @@ export type HubConnection = {
   userId: string;
   socket: WsSender;
   clientKind: ClientKind | null;
+  /** Which UI a `client` bind came from (`workspace.bind.clientLabel`). */
+  clientLabel: ClientLabel | null;
+  /** Set by `user.subscribe`: receives every workspace broadcast of the user. */
+  observeUser: boolean;
   workspaceId: string | null;
   workspacePath: string | null;
   daemonId: string | null;
@@ -123,6 +127,10 @@ export function createHub() {
       }
     },
 
+    /**
+     * Deliver to connections bound to the workspace plus every `user.subscribe` observer
+     * of the same user. One pass over the user's connections, so nobody gets it twice.
+     */
     broadcastToWorkspace(
       userId: string,
       workspaceId: string,
@@ -131,7 +139,7 @@ export function createHub() {
     ) {
       const payload = JSON.stringify(message);
       for (const conn of this.listForUser(userId)) {
-        if (conn.workspaceId !== workspaceId) continue;
+        if (conn.workspaceId !== workspaceId && !conn.observeUser) continue;
         if (exceptConnectionId && conn.connectionId === exceptConnectionId) continue;
         conn.socket.send(payload);
       }

@@ -130,6 +130,8 @@ describe("chat services (db)", () => {
         close: () => {},
       },
       clientKind: "daemon",
+      clientLabel: null,
+      observeUser: false,
       workspaceId: ws.id,
       workspacePath: ws.path,
       daemonId: "daemon-1",

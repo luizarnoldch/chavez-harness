@@ -5,14 +5,21 @@ export type PushHandler = (message: Record<string, unknown>) => void;
 
 export type OpenHandler = (info: { reconnect: boolean }) => void | Promise<void>;
 
+export type CloseHandler = () => void;
+
 export type ChavezWsClientOptions = {
   apiUrl: string;
   token: string;
   onPush?: PushHandler;
   /** Called after every successful socket open (first connect and reconnects). */
   onOpen?: OpenHandler;
+  /** Called on every socket close, including those followed by an automatic reconnect. */
+  onClose?: CloseHandler;
   autoReconnect?: boolean;
 };
+
+/** What the workspace bridge needs from a socket client (lets tests inject a fake). */
+export type WsClientLike = Pick<ChavezWsClient, "connect" | "request" | "close">;
 
 function toWsUrl(apiUrl: string, token: string): string {
   const url = new URL(apiUrl);
@@ -112,6 +119,8 @@ export class ChavezWsClient {
       entry.reject(new Error("WebSocket closed"));
       this.pending.delete(id);
     }
+
+    this.options.onClose?.();
 
     if (this.closedByUser || this.options.autoReconnect === false) return;
 

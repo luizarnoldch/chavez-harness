@@ -13,6 +13,8 @@ function register(
     userId: overrides.userId ?? "user-1",
     socket: overrides.socket ?? { send: () => {}, close: () => {} },
     clientKind: overrides.clientKind ?? null,
+    clientLabel: overrides.clientLabel ?? null,
+    observeUser: overrides.observeUser ?? false,
     workspaceId: overrides.workspaceId ?? null,
     workspacePath: overrides.workspacePath ?? null,
     daemonId: overrides.daemonId ?? null,

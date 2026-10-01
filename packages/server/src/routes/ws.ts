@@ -60,6 +60,8 @@ export function createWsRoute(options: WsRouteOptions = {}) {
               close: (code, reason) => ws.close(code, reason),
             },
             clientKind: null,
+            clientLabel: null,
+            observeUser: false,
             workspaceId: null,
             workspacePath: null,
             daemonId: null,

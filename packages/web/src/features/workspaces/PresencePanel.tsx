@@ -1,6 +1,10 @@
 "use client";
 
 import type { WorkspaceConnection } from "@chavez-harness/shared";
+import { Monitor, Power, PowerOff, Users } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import { StatusPill, type PillTone } from "@/components/common/StatusPill";
 import { cn } from "@/lib/utils";
 
 export type DaemonStatus = "online" | "offline" | "stale";
@@ -23,16 +27,24 @@ type PresencePanelProps = {
   controlError?: string | null;
 };
 
-function statusClass(daemon: DaemonStatus | MachineStatus): string {
-  if (daemon === "online") return "text-build";
-  if (daemon === "stale") return "text-plan";
-  return "text-muted-foreground";
+export function daemonTone(status: DaemonStatus | MachineStatus): PillTone {
+  if (status === "online") return "done";
+  if (status === "stale") return "progress";
+  return "backlog";
 }
 
-function statusLabel(daemon: DaemonStatus | MachineStatus): string {
-  if (daemon === "online") return "online";
-  if (daemon === "stale") return "stale";
-  return "offline";
+export function daemonLabel(status: DaemonStatus): string {
+  if (status === "online") return "Daemon online";
+  if (status === "stale") return "Daemon stale";
+  return "Daemon latente";
+}
+
+function canActivate(presence: PresenceState): boolean {
+  return (presence.machineStatus ?? "offline") === "online" && presence.daemon !== "online";
+}
+
+function canDeactivate(presence: PresenceState): boolean {
+  return !(presence.daemon === "offline" && (presence.daemonDesired ?? "off") === "off");
 }
 
 function ControlButtons({
@@ -49,49 +61,39 @@ function ControlButtons({
   compact?: boolean;
 }) {
   if (!onActivate && !onDeactivate) return null;
-  const machine = presence.machineStatus ?? "offline";
-  const desired = presence.daemonDesired ?? "off";
-  const btn = compact
-    ? "rounded px-2 py-0.5 text-[10px] font-medium"
-    : "rounded-md px-3 py-1.5 text-xs font-medium";
-
+  const size = compact ? "xs" : "sm";
   return (
-    <div className={cn("flex flex-wrap gap-2", compact ? "mt-1.5" : "mt-3")}>
+    <div className="flex flex-wrap gap-2">
       {onActivate ? (
-        <button
+        <Button
           type="button"
-          disabled={controlling || machine === "offline" || presence.daemon === "online"}
+          size={size}
+          disabled={controlling || !canActivate(presence)}
           onClick={(e) => {
             e.preventDefault();
             e.stopPropagation();
             onActivate();
           }}
-          className={cn(
-            btn,
-            "bg-primary text-primary-foreground disabled:opacity-50",
-          )}
         >
+          <Power />
           Activar
-        </button>
+        </Button>
       ) : null}
       {onDeactivate ? (
-        <button
+        <Button
           type="button"
-          disabled={
-            controlling || (presence.daemon === "offline" && desired === "off")
-          }
+          size={size}
+          variant="outline"
+          disabled={controlling || !canDeactivate(presence)}
           onClick={(e) => {
             e.preventDefault();
             e.stopPropagation();
             onDeactivate();
           }}
-          className={cn(
-            btn,
-            "border border-border disabled:opacity-50",
-          )}
         >
+          <PowerOff />
           Desactivar
-        </button>
+        </Button>
       ) : null}
     </div>
   );
@@ -107,10 +109,10 @@ export function PresencePanel({
   controlError,
 }: PresencePanelProps) {
   if (!presence) {
-    return (
-      <p className={cn("text-muted-foreground text-xs", className)}>
-        Cargando conexiones…
-      </p>
+    return compact ? (
+      <Skeleton className={cn("h-5 w-48", className)} />
+    ) : (
+      <Skeleton className={cn("h-28 w-full rounded-xl", className)} />
     );
   }
 
@@ -121,18 +123,16 @@ export function PresencePanel({
 
   if (compact) {
     return (
-      <div className={cn(className)}>
-        <p className="text-xs">
-          <span className={statusClass(machine)}>PC {statusLabel(machine)}</span>
-          <span className="text-muted-foreground"> · </span>
-          <span className={statusClass(presence.daemon)}>
-            Daemon {statusLabel(presence.daemon)}
-          </span>
-          <span className="text-muted-foreground"> · </span>
-          <span className="text-muted-foreground">
-            {clients.length} cliente{clients.length === 1 ? "" : "s"}
-          </span>
-        </p>
+      <div className={cn("flex flex-wrap items-center gap-1.5", className)}>
+        <StatusPill size="sm" tone={daemonTone(machine)}>
+          PC {machine}
+        </StatusPill>
+        <StatusPill size="sm" tone={daemonTone(presence.daemon)} pulse={presence.daemon === "online"}>
+          {daemonLabel(presence.daemon)}
+        </StatusPill>
+        <span className="text-[11px] text-faint">
+          {clients.length} cliente{clients.length === 1 ? "" : "s"}
+        </span>
         <ControlButtons
           presence={presence}
           onActivate={onActivate}
@@ -141,7 +141,7 @@ export function PresencePanel({
           compact
         />
         {controlError ? (
-          <p className="text-destructive mt-1 text-[10px]" role="alert">
+          <p className="w-full text-[11px] text-destructive" role="alert">
             {controlError}
           </p>
         ) : null}
@@ -150,31 +150,36 @@ export function PresencePanel({
   }
 
   return (
-    <div
-      className={cn(
-        "rounded-xl border border-border/80 bg-card/60 px-4 py-3",
-        className,
-      )}
-    >
-      <p className="text-sm font-medium tracking-tight">Conexiones activas</p>
-      <ul className="mt-2 flex flex-col gap-1.5 text-sm">
+    <div className={cn("flex flex-col gap-3", className)}>
+      <ul className="flex flex-col gap-2 text-sm">
         <li className="flex items-center justify-between gap-2">
-          <span className="text-muted-foreground">PC (Host)</span>
-          <span className={cn("font-medium", statusClass(machine))}>
-            {statusLabel(machine)}
+          <span className="flex items-center gap-2 text-muted-foreground">
+            <Monitor className="size-4" />
+            PC (Host)
+          </span>
+          <StatusPill tone={daemonTone(machine)}>{machine}</StatusPill>
+        </li>
+        <li className="flex items-center justify-between gap-2">
+          <span className="flex items-center gap-2 text-muted-foreground">
+            <Power className="size-4" />
+            Daemon
+          </span>
+          <span className="flex items-center gap-2">
+            <span className="text-xs text-faint">
+              deseado {desired}
+              {daemons.length > 1 ? ` · ${daemons.length}` : ""}
+            </span>
+            <StatusPill tone={daemonTone(presence.daemon)} pulse={presence.daemon === "online"}>
+              {presence.daemon}
+            </StatusPill>
           </span>
         </li>
         <li className="flex items-center justify-between gap-2">
-          <span className="text-muted-foreground">Daemon</span>
-          <span className={cn("font-medium", statusClass(presence.daemon))}>
-            {statusLabel(presence.daemon)}
-            {desired === "on" ? " · deseado on" : " · deseado off"}
-            {daemons.length > 1 ? ` (${daemons.length})` : ""}
+          <span className="flex items-center gap-2 text-muted-foreground">
+            <Users className="size-4" />
+            Clientes (TUI / web)
           </span>
-        </li>
-        <li className="flex items-center justify-between gap-2">
-          <span className="text-muted-foreground">Clientes (TUI / web)</span>
-          <span className="font-medium">{clients.length}</span>
+          <span className="font-medium tabular-nums">{clients.length}</span>
         </li>
       </ul>
 
@@ -186,20 +191,18 @@ export function PresencePanel({
       />
 
       {controlError ? (
-        <p className="text-destructive mt-2 text-xs" role="alert">
+        <p className="text-xs text-destructive" role="alert">
           {controlError}
         </p>
       ) : null}
 
       {machine === "offline" ? (
-        <p className="text-muted-foreground mt-2 text-xs">
-          PC offline. Arranca el Host en tu máquina (`chavez headless workspace host` o abre el
-          TUI).
+        <p className="text-xs text-faint">
+          PC offline. Arranca el Host en tu máquina (
+          <code className="font-mono">chavez headless workspace host</code> o abre el TUI).
         </p>
       ) : presence.connections.length === 0 && presence.daemon === "offline" ? (
-        <p className="text-muted-foreground mt-2 text-xs">
-          Daemon latente. Actívalo aquí o abre el TUI en este path.
-        </p>
+        <p className="text-xs text-faint">Daemon latente. Actívalo aquí o abre el TUI en este path.</p>
       ) : null}
     </div>
   );

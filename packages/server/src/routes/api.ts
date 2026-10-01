@@ -1,4 +1,9 @@
-import { chatModeSchema } from "@chavez-harness/shared";
+import {
+  chatModeSchema,
+  clientLabelSchema,
+  type DashboardSnapshot,
+  type PushOrigin,
+} from "@chavez-harness/shared";
 import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -7,32 +12,28 @@ import { ChatNotFoundError, type ChatService, type WorkspaceService } from "../s
 import type { Hub } from "../ws/hub.ts";
 import type { PendingRegistry } from "../ws/pending.ts";
 import { applyDaemonDesired } from "../ws/daemon-desired.ts";
+import {
+  connectionsFor,
+  daemonStatusFor,
+  emitConnectionStatus,
+  emitMessageCreated,
+  emitSessionDeleted,
+  emitSessionUpdated,
+} from "../ws/emit.ts";
 import type { ProviderCredentialsService } from "../services/providers.ts";
 import type { ProviderJobStore } from "../services/provider-jobs.ts";
 import { resolveProviderReply } from "../services/resolve-provider-reply.ts";
 
-function emitMessagePushes(
-  hub: Hub | undefined,
-  userId: string,
-  workspaceId: string,
-  session: unknown,
-  messages: unknown[],
-) {
-  if (!hub) return;
-  for (const message of messages) {
-    hub.broadcastToWorkspace(userId, workspaceId, {
-      push: true,
-      eventId: crypto.randomUUID(),
-      type: "session.message.created",
-      data: { workspaceId, session, message },
-    });
-  }
-  hub.broadcastToWorkspace(userId, workspaceId, {
-    push: true,
-    eventId: crypto.randomUUID(),
-    type: "session.updated",
-    data: session,
-  });
+function startOfUtcDay(date: Date): Date {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+}
+
+/** REST callers declare their UI with `x-chavez-client: web|tui`; anything else is `api`. */
+export const CLIENT_HEADER = "x-chavez-client";
+
+function originFromHeader(value: string | undefined): PushOrigin {
+  const parsed = clientLabelSchema.safeParse(value);
+  return parsed.success ? parsed.data : "api";
 }
 
 export type ApiRoutesOptions = {
@@ -100,23 +101,42 @@ export function createApiRoutes(options: ApiRoutesOptions) {
       const user = c.get("user");
       const ws = await workspaces.getForUser(user.id, workspaceId);
       if (!ws) return c.json({ error: "Workspace no encontrado" }, 404);
-      const list = hub?.listForWorkspace(user.id, workspaceId) ?? [];
-      const daemon = list.some(
-        (conn) => conn.clientKind === "daemon" && conn.role === "primary",
-      )
-        ? ("online" as const)
-        : ("offline" as const);
       return c.json({
-        daemon,
+        daemon: hub ? daemonStatusFor(hub, user.id, workspaceId) : ("offline" as const),
         daemonDesired: ws.daemonDesired,
         daemonDesiredSource: ws.daemonDesiredSource,
         machineStatus: hub?.machineStatus(user.id) ?? ("offline" as const),
-        connections: list.map((conn) => ({
-          connectionId: conn.connectionId,
-          clientKind: conn.clientKind,
-          role: conn.role,
-        })),
+        connections: hub ? connectionsFor(hub, user.id, workspaceId) : [],
       });
+    },
+  );
+
+  app.get(
+    "/api/dashboard",
+    zValidator("query", z.object({ since: z.string().datetime().optional() })),
+    async (c) => {
+      const user = c.get("user");
+      const { since } = c.req.valid("query");
+      const sinceDate = since ? new Date(since) : startOfUtcDay(new Date());
+
+      const [list, stats] = await Promise.all([
+        workspaces.listForUser(user.id),
+        chat.getDashboardStats(user.id, { limit: 10, since: sinceDate }),
+      ]);
+
+      const snapshot: DashboardSnapshot = {
+        machineStatus: hub?.machineStatus(user.id) ?? "offline",
+        workspaces: list.map((ws) => ({
+          ...ws,
+          daemonStatus: hub ? daemonStatusFor(hub, user.id, ws.id) : "offline",
+          connections: hub ? connectionsFor(hub, user.id, ws.id) : [],
+          sessionCount: stats.sessionCountByWorkspace[ws.id] ?? 0,
+        })),
+        recentSessions: stats.recentSessions,
+        sessionsToday: stats.sessionsToday,
+        generatedAt: new Date().toISOString(),
+      };
+      return c.json(snapshot);
     },
   );
 
@@ -151,21 +171,8 @@ export function createApiRoutes(options: ApiRoutesOptions) {
           desired: body.desired,
           source: body.source,
         });
-        hub.broadcastToWorkspace(user.id, workspaceId, {
-          push: true,
-          eventId: crypto.randomUUID(),
-          type: "connection.status",
-          data: {
-            linked: true,
-            workspaceId,
-            path: outcome.workspace.path,
-            daemon: outcome.daemonStatus,
-            connections: hub.listForWorkspace(user.id, workspaceId).map((conn) => ({
-              connectionId: conn.connectionId,
-              clientKind: conn.clientKind,
-              role: conn.role,
-            })),
-          },
+        emitConnectionStatus(hub, user.id, workspaceId, outcome.workspace.path, {
+          daemonDesired: outcome.workspace.daemonDesired,
         });
         return c.json({
           workspace: outcome.workspace,
@@ -217,12 +224,12 @@ export function createApiRoutes(options: ApiRoutesOptions) {
       const user = c.get("user");
       try {
         const session = await chat.createSession(user.id, workspaceId, body);
-        hub?.broadcastToWorkspace(user.id, workspaceId, {
-          push: true,
-          eventId: crypto.randomUUID(),
-          type: "session.updated",
-          data: session,
-        });
+        if (hub) {
+          emitSessionUpdated(hub, user.id, session, {
+            origin: originFromHeader(c.req.header(CLIENT_HEADER)),
+            change: "created",
+          });
+        }
         return c.json(session);
       } catch (err) {
         if (err instanceof ChatNotFoundError) {
@@ -258,6 +265,41 @@ export function createApiRoutes(options: ApiRoutesOptions) {
     },
   );
 
+  app.patch(
+    "/api/sessions/:sessionId",
+    zValidator("param", z.object({ sessionId: z.string().uuid() })),
+    zValidator(
+      "json",
+      z.object({
+        mode: chatModeSchema.optional(),
+        provider: z.string().min(1).optional(),
+        model: z.string().min(1).optional(),
+        title: z.string().max(200).nullable().optional(),
+      }),
+    ),
+    async (c) => {
+      const { sessionId } = c.req.valid("param");
+      const body = c.req.valid("json");
+      const user = c.get("user");
+      try {
+        const { session, changed } = await chat.updateSession(user.id, sessionId, body);
+        if (hub && changed.length > 0) {
+          emitSessionUpdated(hub, user.id, session, {
+            origin: originFromHeader(c.req.header(CLIENT_HEADER)),
+            change: "settings",
+            changed,
+          });
+        }
+        return c.json({ session, changed });
+      } catch (err) {
+        if (err instanceof ChatNotFoundError) {
+          return c.json({ error: err.message }, 404);
+        }
+        throw err;
+      }
+    },
+  );
+
   app.delete(
     "/api/sessions/:sessionId",
     zValidator("param", z.object({ sessionId: z.string().uuid() })),
@@ -266,15 +308,14 @@ export function createApiRoutes(options: ApiRoutesOptions) {
       const user = c.get("user");
       try {
         const deleted = await chat.deleteSession(user.id, sessionId);
-        hub?.broadcastToWorkspace(user.id, deleted.workspaceId, {
-          push: true,
-          eventId: crypto.randomUUID(),
-          type: "session.deleted",
-          data: {
-            workspaceId: deleted.workspaceId,
-            chatSessionId: deleted.sessionId,
-          },
-        });
+        if (hub) {
+          emitSessionDeleted(
+            hub,
+            user.id,
+            deleted,
+            originFromHeader(c.req.header(CLIENT_HEADER)),
+          );
+        }
         return c.json({
           workspaceId: deleted.workspaceId,
           chatSessionId: deleted.sessionId,
@@ -305,6 +346,7 @@ export function createApiRoutes(options: ApiRoutesOptions) {
       const { sessionId } = c.req.valid("param");
       const body = c.req.valid("json");
       const user = c.get("user");
+      const origin = originFromHeader(c.req.header(CLIENT_HEADER));
       try {
         const result = await chat.sendMessage({
           chatSessionId: sessionId,
@@ -316,7 +358,7 @@ export function createApiRoutes(options: ApiRoutesOptions) {
           clientMessageId: body.clientMessageId,
           onUserMessagePersisted: hub
             ? async ({ session, userMessage, workspaceId }) => {
-                emitMessagePushes(hub, user.id, workspaceId, session, [userMessage]);
+                emitMessageCreated(hub, user.id, workspaceId, session, userMessage, origin);
               }
             : undefined,
           generateReply:
@@ -339,10 +381,16 @@ export function createApiRoutes(options: ApiRoutesOptions) {
                   )
               : undefined,
         });
-        if (result.created) {
-          emitMessagePushes(hub, user.id, result.session.workspaceId, result.session, [
+        if (result.created && hub) {
+          emitMessageCreated(
+            hub,
+            user.id,
+            result.session.workspaceId,
+            result.session,
             result.assistantMessage,
-          ]);
+            origin,
+          );
+          emitSessionUpdated(hub, user.id, result.session, { origin, change: "message" });
         }
         return c.json(result);
       } catch (err) {
